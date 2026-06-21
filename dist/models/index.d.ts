@@ -1,0 +1,23 @@
+import { Sequelize } from 'sequelize';
+import { User } from './User';
+import { Hobby } from './Hobby';
+import { ProfileGallery } from './ProfileGallery';
+import { FriendRequest } from './FriendRequest';
+import { Friend } from './Friend';
+import { Block } from './Block';
+import { Post } from './Post';
+import { PostPhoto } from './PostPhoto';
+import { PostLike } from './PostLike';
+import { SavedPost } from './SavedPost';
+import { Comment } from './Comment';
+import { Conversation } from './Conversation';
+import { Message } from './Message';
+import { ConversationReadStatus } from './ConversationReadStatus';
+import { Call } from './Call';
+import { Notification } from './Notification';
+import { CrossSettings } from './CrossSettings';
+import { CrossEvent } from './CrossEvent';
+import { ProfileLike } from './ProfileLike';
+export declare function initModels(sequelize: Sequelize): void;
+export { User, Hobby, ProfileGallery, FriendRequest, Friend, Block, Post, PostPhoto, PostLike, SavedPost, Comment, Conversation, Message, ConversationReadStatus, Call, Notification, CrossSettings, CrossEvent, ProfileLike, };
+//# sourceMappingURL=index.d.ts.map

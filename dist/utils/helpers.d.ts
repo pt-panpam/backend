@@ -1,0 +1,87 @@
+import { User } from '../models/User';
+export declare function generateTokens(user: User): {
+    access: string;
+    refresh: string;
+};
+export declare function hashPassword(password: string): Promise<string>;
+export declare function comparePassword(password: string, hash: string): Promise<boolean>;
+export declare function serializeUser(user: User, currentUserId?: number): {
+    id: number;
+    username: string;
+    email: string;
+    first_name: string;
+    last_name: string;
+    profile_picture: string;
+    date_of_birth: string | null;
+    age: number | null;
+    sex: string;
+    bio: string;
+    location: string;
+    latitude: number | null;
+    longitude: number | null;
+    hobbies: string[];
+    onboarding_complete: boolean;
+    is_private: boolean;
+    show_online_status: boolean;
+    read_receipts: boolean;
+    last_seen: Date;
+    created_at: Date;
+    total_crosses: number;
+    friend_count: number;
+    is_friend: boolean;
+    friend_request_status: null;
+    phone_number: string;
+    who_can_message: string;
+    who_can_see_posts: string;
+    story_visibility: string;
+    friend_request_mode: string;
+    theme: string;
+    language: string;
+    data_saver: boolean;
+};
+export declare function serializeUserProfile(user: User): {
+    id: number;
+    username: string;
+    first_name: string;
+    last_name: string;
+    profile_picture: string;
+    age: number | null;
+    sex: string;
+    bio: string;
+    location: string;
+    hobbies: string[];
+    total_crosses: number;
+    friend_count: number;
+    is_friend: boolean;
+    friend_request_status: null;
+    last_seen: Date;
+};
+export declare function serializePost(post: any, currentUserId?: number): {
+    id: any;
+    user: {
+        id: any;
+        username: any;
+        first_name: any;
+        last_name: any;
+        profile_picture: any;
+    } | {
+        id: any;
+        username?: undefined;
+        first_name?: undefined;
+        last_name?: undefined;
+        profile_picture?: undefined;
+    };
+    caption: any;
+    location: any;
+    latitude: any;
+    longitude: any;
+    photos: any;
+    like_count: any;
+    has_liked: any;
+    is_expired: boolean;
+    is_saved: any;
+    is_active: any;
+    created_at: any;
+    expires_at: any;
+};
+//# sourceMappingURL=helpers.d.ts.map

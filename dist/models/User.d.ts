@@ -1,0 +1,42 @@
+import { Model, Sequelize } from 'sequelize';
+export declare class User extends Model {
+    id: number;
+    username: string;
+    email: string;
+    password: string;
+    googleId: string | null;
+    firstName: string;
+    lastName: string;
+    profilePicture: string;
+    dateOfBirth: string | null;
+    sex: string;
+    bio: string;
+    location: string;
+    latitude: number | null;
+    longitude: number | null;
+    hobbies: string[];
+    onboardingComplete: boolean;
+    isPrivate: boolean;
+    showOnlineStatus: boolean;
+    readReceipts: boolean;
+    pushLikes: boolean;
+    pushComments: boolean;
+    pushFollows: boolean;
+    pushMessages: boolean;
+    phoneNumber: string;
+    whoCanMessage: string;
+    whoCanSeePosts: string;
+    storyVisibility: string;
+    friendRequestMode: string;
+    theme: string;
+    language: string;
+    dataSaver: boolean;
+    isActive: boolean;
+    isLive: boolean;
+    lastSeen: Date;
+    created_at: Date;
+    updated_at: Date;
+    get age(): number | null;
+}
+export declare function initUser(sequelize: Sequelize): void;
+//# sourceMappingURL=User.d.ts.map
