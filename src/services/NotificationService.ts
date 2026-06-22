@@ -24,6 +24,8 @@ function shouldSendPush(type: NotificationType, user: User): boolean {
       return user.pushFollows;
     case 'new_message':
       return user.pushMessages;
+    case 'profile_like':
+      return user.pushLikes;
     case 'cross_event':
       return true;
     default:

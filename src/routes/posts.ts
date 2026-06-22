@@ -8,10 +8,13 @@ import { SavedPost } from '../models/SavedPost';
 import { Comment } from '../models/Comment';
 import { Friend } from '../models/Friend';
 import { Notification } from '../models/Notification';
+import { Conversation } from '../models/Conversation';
+import { Message } from '../models/Message';
 import { createAndDeliverNotification } from '../services/NotificationService';
 import { AuthRequest, authenticate } from '../middleware/auth';
 import { upload } from '../middleware/upload';
 import { serializePost } from '../utils/helpers';
+import { getIO } from '../io';
 
 const router = Router();
 
@@ -22,7 +25,7 @@ router.get('/feed/', authenticate, async (req: AuthRequest, res: Response) => {
   const friendIds = (await Friend.findAll({ where: { userId: req.user!.id }, attributes: ['friendId'] })).map(f => (f as any).friendId);
 
   const { count, rows } = await Post.findAndCountAll({
-    where: { userId: { [Op.in]: friendIds }, isActive: true, expiresAt: { [Op.gt]: new Date() } },
+    where: { userId: { [Op.in]: [...friendIds, req.user!.id] }, isActive: true, expiresAt: { [Op.gt]: new Date() } },
     include: [
       { model: User, as: 'user', attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture'] },
       { model: PostPhoto, as: 'photos' },
@@ -251,6 +254,54 @@ router.post('/:id/comments/', authenticate, async (req: AuthRequest, res: Respon
       actorId: req.user!.id,
       postId: post.id,
     });
+
+    // Create message in chat with post context
+    const allConvs = await Conversation.findAll({
+      include: [{
+        model: User,
+        as: 'participants',
+        through: { attributes: [] },
+      }],
+    });
+    let conv: any = allConvs.find(c =>
+      (c as any).participants?.length === 2 &&
+      (c as any).participants?.some((p: any) => p.id === req.user!.id) &&
+      (c as any).participants?.some((p: any) => p.id === post!.userId)
+    );
+    if (!conv) {
+      conv = await Conversation.create() as any;
+      if (conv) await (conv as any).setParticipants([req.user!.id, post!.userId]);
+    }
+    if (conv) {
+      const msg = await Message.create({
+        conversationId: conv.id,
+        senderId: req.user!.id,
+        text: req.body.text || '',
+        postId: post.id,
+      } as any);
+      await conv.update({ updated_at: new Date() });
+      const msgFull = await Message.findByPk(msg.id, {
+        include: [
+          { model: User, as: 'sender', attributes: ['id', 'firstName', 'lastName', 'profilePicture'] },
+          { model: Post, as: 'post', attributes: ['id', 'caption'] },
+        ],
+      });
+      const msgData = {
+        id: msg.id,
+        conversation: conv.id,
+        sender: { id: (msgFull as any)?.sender?.id, first_name: (msgFull as any)?.sender?.firstName, profile_picture: (msgFull as any)?.sender?.profilePicture },
+        text: msg.text,
+        image: msg.image,
+        reply_to: null,
+        post: (msgFull as any)?.post ? { id: (msgFull as any).post.id, caption: (msgFull as any).post.caption } : null,
+        is_read: msg.isRead,
+        created_at: msg.created_at,
+      };
+      const sio = getIO();
+      sio?.to(`conversation:${conv.id}`).emit('message:new', msgData);
+      sio?.to(`user:${post!.userId}`).emit('message:new', msgData);
+      sio?.to(`user:${post!.userId}`).emit('conversation:updated', { conversationId: conv.id });
+    }
   }
   res.status(201).json({
     id: comment.id,

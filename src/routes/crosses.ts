@@ -3,6 +3,7 @@ import { Op } from 'sequelize';
 import { User } from '../models/User';
 import { CrossSettings } from '../models/CrossSettings';
 import { CrossEvent } from '../models/CrossEvent';
+import { Friend } from '../models/Friend';
 import { AuthRequest, authenticate } from '../middleware/auth';
 
 const router = Router();
@@ -34,6 +35,7 @@ router.patch('/settings/', authenticate, async (req: AuthRequest, res: Response)
   }
   if (req.body.review_hour !== undefined) settings.reviewHour = req.body.review_hour;
   if (req.body.review_minute !== undefined) settings.reviewMinute = req.body.review_minute;
+  if (req.body.reveal_delay_minutes !== undefined) settings.revealDelayMinutes = req.body.reveal_delay_minutes;
   await settings.save();
   res.json({
     review_hour: settings.reviewHour,
@@ -57,7 +59,7 @@ router.get('/events/', authenticate, async (req: AuthRequest, res: Response) => 
   const results = await Promise.all(events.map(async e => {
     const otherId = e.user1Id === req.user!.id ? e.user2Id : e.user1Id;
     const other = await User.findByPk(otherId);
-    const isFriend = other ? true : false;
+    const isFriend = other ? !!(await Friend.findOne({ where: { userId: req.user!.id, friendId: other.id } })) : false;
 
     // Jitter for non-participants
     let displayLat = e.latitude;

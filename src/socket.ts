@@ -5,7 +5,10 @@ import { env } from './config/env';
 import { User } from './models/User';
 import { Conversation } from './models/Conversation';
 import { Message } from './models/Message';
+import { Post } from './models/Post';
 import { ConversationReadStatus } from './models/ConversationReadStatus';
+import { Friend } from './models/Friend';
+import { createAndDeliverNotification } from './services/NotificationService';
 
 interface AuthenticatedSocket extends Socket {
   userId?: number;
@@ -67,7 +70,7 @@ export function setupSocket(server: HTTPServer): Server {
     });
 
     // Send message
-    socket.on('message:send', async (data: { conversationId?: number; receiverId?: number; text?: string; image?: string }, callback) => {
+    socket.on('message:send', async (data: { conversationId?: number; receiverId?: number; text?: string; image?: string; reply_to?: number; post_id?: number }, callback) => {
       try {
         let convId = data.conversationId;
 
@@ -88,7 +91,8 @@ export function setupSocket(server: HTTPServer): Server {
           if (existing) {
             convId = existing.id;
           } else {
-            const conv = await Conversation.create() as any;
+            const friends = !!(await Friend.findOne({ where: { userId, friendId: data.receiverId } }));
+            const conv = await Conversation.create({ isRequest: !friends } as any) as any;
             await (conv as any).setParticipants([userId, data.receiverId]);
             convId = conv.id;
           }
@@ -104,12 +108,18 @@ export function setupSocket(server: HTTPServer): Server {
           senderId: userId,
           text: data.text || '',
           image: data.image || null,
+          replyToId: data.reply_to || null,
+          postId: data.post_id || null,
         } as any);
 
         await Conversation.update({ updated_at: new Date() }, { where: { id: convId } });
 
         const full = await Message.findByPk(msg.id, {
-          include: [{ model: User, as: 'sender', attributes: ['id', 'firstName', 'lastName', 'profilePicture'] }],
+          include: [
+            { model: User, as: 'sender', attributes: ['id', 'firstName', 'lastName', 'profilePicture'] },
+            { model: Message, as: 'replyTo', attributes: ['id', 'text', 'image', 'senderId'] },
+            { model: Post, as: 'post', attributes: ['id', 'caption'] },
+          ],
         });
 
         const messageData = {
@@ -122,6 +132,8 @@ export function setupSocket(server: HTTPServer): Server {
           },
           text: msg.text,
           image: msg.image,
+          reply_to: (full as any)?.replyTo ? { id: (full as any).replyTo.id, text: (full as any).replyTo.text, image: (full as any).replyTo.image } : null,
+          post: (full as any)?.post ? { id: (full as any).post.id, caption: (full as any).post.caption } : null,
           is_read: msg.isRead,
           created_at: msg.created_at,
         };
@@ -133,6 +145,21 @@ export function setupSocket(server: HTTPServer): Server {
         if (data.receiverId) {
           io.to(`user:${data.receiverId}`).emit('message:new', messageData);
           io.to(`user:${data.receiverId}`).emit('conversation:updated', { conversationId: convId });
+
+          // Create notification
+          const sender = await User.findByPk(userId, { attributes: ['id', 'firstName', 'lastName'] });
+          if (sender) {
+            const body = data.text
+              ? (data.text.length > 100 ? data.text.slice(0, 100) + '...' : data.text)
+              : (data.image ? 'Sent a photo' : 'Sent a message');
+            await createAndDeliverNotification({
+              userId: data.receiverId,
+              type: 'new_message',
+              title: `${sender.firstName} ${sender.lastName}`,
+              body,
+              actorId: userId,
+            });
+          }
         }
 
         callback?.({ success: true, message: messageData });

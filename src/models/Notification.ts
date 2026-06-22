@@ -4,7 +4,7 @@ import { User } from './User';
 export class Notification extends Model {
   declare id: number;
   declare userId: number;
-  declare type: 'friend_request' | 'friend_accepted' | 'post_like' | 'post_comment' | 'new_message' | 'cross_event';
+  declare type: 'friend_request' | 'friend_accepted' | 'post_like' | 'post_comment' | 'new_message' | 'cross_event' | 'profile_like';
   declare title: string;
   declare body: string;
   declare actorId: number | null;

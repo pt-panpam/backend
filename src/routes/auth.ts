@@ -4,9 +4,11 @@ import { OAuth2Client } from 'google-auth-library';
 import { User } from '../models/User';
 import { ProfileGallery } from '../models/ProfileGallery';
 import { ProfileLike } from '../models/ProfileLike';
+import { Report } from '../models/Report';
 import { AuthRequest, authenticate } from '../middleware/auth';
 import { upload } from '../middleware/upload';
 import { generateTokens, hashPassword, comparePassword, serializeUser } from '../utils/helpers';
+import { createAndDeliverNotification } from '../services/NotificationService';
 
 const googleClient = new OAuth2Client();
 
@@ -288,7 +290,7 @@ router.patch('/user/privacy/', authenticate, async (req: AuthRequest, res: Respo
 // Notification settings
 router.get('/user/notifications/', authenticate, (req: AuthRequest, res: Response) => {
   const u = req.user!;
-  res.json({ push_likes: u.pushLikes, push_comments: u.pushComments, push_follows: u.pushFollows, push_messages: u.pushMessages });
+  res.json({ push_likes: u.pushLikes, push_comments: u.pushComments, push_follows: u.pushFollows, push_messages: u.pushMessages, push_crosses: u.pushCrosses });
 });
 router.patch('/user/notifications/', authenticate, async (req: AuthRequest, res: Response) => {
   const u = req.user!;
@@ -296,8 +298,9 @@ router.patch('/user/notifications/', authenticate, async (req: AuthRequest, res:
   if (req.body.push_comments !== undefined) u.pushComments = req.body.push_comments;
   if (req.body.push_follows !== undefined) u.pushFollows = req.body.push_follows;
   if (req.body.push_messages !== undefined) u.pushMessages = req.body.push_messages;
+  if (req.body.push_crosses !== undefined) u.pushCrosses = req.body.push_crosses;
   await u.save();
-  res.json({ push_likes: u.pushLikes, push_comments: u.pushComments, push_follows: u.pushFollows, push_messages: u.pushMessages });
+  res.json({ push_likes: u.pushLikes, push_comments: u.pushComments, push_follows: u.pushFollows, push_messages: u.pushMessages, push_crosses: u.pushCrosses });
 });
 
 router.post('/user/push-token/', authenticate, async (req: AuthRequest, res: Response) => {
@@ -397,6 +400,15 @@ router.post('/user/:id/like/', authenticate, async (req: AuthRequest, res: Respo
       where: { userId: req.user!.id, likedUserId },
       defaults: { userId: req.user!.id, likedUserId },
     });
+    if (created) {
+      await createAndDeliverNotification({
+        userId: likedUserId,
+        type: 'profile_like',
+        title: 'Profile Like',
+        body: `${req.user!.firstName} liked your profile`,
+        actorId: req.user!.id,
+      });
+    }
     res.status(created ? 201 : 200).json({ id: like.id });
   } catch (err) { res.status(500).json({ error: 'Failed to like profile' }); }
 });
@@ -433,6 +445,21 @@ router.get('/user/:id/liked/', authenticate, async (req: AuthRequest, res: Respo
     });
     res.json({ liked: !!like });
   } catch (err) { res.status(500).json({ error: 'Failed to check like' }); }
+});
+
+// Report a user
+router.post('/report/', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const { reported_user_id, reason, conversation_id } = req.body;
+    if (!reported_user_id) { res.status(400).json({ error: 'reported_user_id is required' }); return; }
+    await Report.create({
+      reporterId: req.user!.id,
+      reportedUserId: Number(reported_user_id),
+      reason: reason || '',
+      conversationId: conversation_id ? Number(conversation_id) : null,
+    } as any);
+    res.status(201).json({ detail: 'Report submitted' });
+  } catch (err) { res.status(500).json({ error: 'Failed to submit report' }); }
 });
 
 export default router;

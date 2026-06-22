@@ -18,6 +18,7 @@ import { Notification, initNotification } from './Notification';
 import { CrossSettings, initCrossSettings } from './CrossSettings';
 import { CrossEvent, initCrossEvent } from './CrossEvent';
 import { ProfileLike, initProfileLike } from './ProfileLike';
+import { Report, initReport } from './Report';
 
 export function initModels(sequelize: Sequelize): void {
   initUser(sequelize);
@@ -39,6 +40,7 @@ export function initModels(sequelize: Sequelize): void {
   initCrossSettings(sequelize);
   initCrossEvent(sequelize);
   initProfileLike(sequelize);
+  initReport(sequelize);
 
   // Associations
   User.hasMany(Post, { foreignKey: 'userId', as: 'posts' });
@@ -67,6 +69,8 @@ export function initModels(sequelize: Sequelize): void {
   Message.belongsTo(Conversation, { foreignKey: 'conversationId', as: 'conversation' });
   Message.belongsTo(User, { foreignKey: 'senderId', as: 'sender' });
   User.hasMany(Message, { foreignKey: 'senderId', as: 'sentMessages' });
+  Message.belongsTo(Message, { foreignKey: 'replyToId', as: 'replyTo' });
+  Message.belongsTo(Post, { foreignKey: 'postId', as: 'post' });
 
   Conversation.hasMany(ConversationReadStatus, { foreignKey: 'conversationId', as: 'readStatuses' });
   ConversationReadStatus.belongsTo(Conversation, { foreignKey: 'conversationId', as: 'conversation' });
@@ -110,4 +114,5 @@ export {
   CrossSettings,
   CrossEvent,
   ProfileLike,
+  Report,
 };

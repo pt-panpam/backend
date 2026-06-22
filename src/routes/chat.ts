@@ -3,13 +3,21 @@ import { Op } from 'sequelize';
 import { User } from '../models/User';
 import { Conversation } from '../models/Conversation';
 import { Message } from '../models/Message';
+import { Post } from '../models/Post';
 import { ConversationReadStatus } from '../models/ConversationReadStatus';
 import { Call } from '../models/Call';
+import { Friend } from '../models/Friend';
 import { AuthRequest, authenticate } from '../middleware/auth';
 import { upload } from '../middleware/upload';
 import { getIO } from '../io';
+import { createAndDeliverNotification } from '../services/NotificationService';
 
 const router = Router();
+
+async function areFriends(userId: number, otherId: number): Promise<boolean> {
+  const f = await Friend.findOne({ where: { userId, friendId: otherId } });
+  return !!f;
+}
 
 // Debug: check socket.io status
 router.get('/debug/socket/', (_req, res) => {
@@ -54,10 +62,14 @@ router.get('/conversations/', authenticate, async (req: AuthRequest, res: Respon
           sender: { id: lastMsg.senderId },
           text: lastMsg.text,
           image: lastMsg.image,
+          reply_to: null,
+          post: null,
           is_read: lastMsg.isRead,
           created_at: lastMsg.created_at,
         } : null,
         unread_count: unreadCount,
+        disappearing_minutes: c.disappearingMinutes,
+        is_request: c.isRequest,
         created_at: c.created_at,
         updated_at: c.updated_at,
       };
@@ -84,7 +96,8 @@ router.post('/conversations/create/', authenticate, async (req: AuthRequest, res
   );
 
   if (!conv) {
-    conv = await Conversation.create() as any;
+    const friends = await areFriends(req.user!.id, receiver_id);
+    conv = await Conversation.create({ isRequest: !friends } as any) as any;
     if (!conv) { res.status(500).json({ error: 'Failed to create conversation' }); return; }
     await (conv as any).setParticipants([req.user!.id, receiver_id]);
   }
@@ -100,6 +113,7 @@ router.post('/conversations/create/', authenticate, async (req: AuthRequest, res
     })),
     last_message: null,
     unread_count: 0,
+    is_request: conv.isRequest,
     created_at: conv.created_at,
     updated_at: conv.updated_at,
   });
@@ -119,11 +133,19 @@ router.get('/conversations/:id/', authenticate, async (req: AuthRequest, res: Re
   if (!(conv as any).participants?.some((p: any) => p.id === req.user!.id)) {
     res.status(403).json({ error: 'Not a participant' }); return;
   }
-  const messages = await Message.findAll({
+  const allMessages = await Message.findAll({
     where: { conversationId: conv.id },
-    include: [{ model: User, as: 'sender', attributes: ['id', 'firstName', 'lastName', 'profilePicture'] }],
+    include: [
+      { model: User, as: 'sender', attributes: ['id', 'firstName', 'lastName', 'profilePicture'] },
+      { model: Message, as: 'replyTo', attributes: ['id', 'text', 'image', 'senderId'] },
+      { model: Post, as: 'post', attributes: ['id', 'caption'] },
+    ],
     order: [['created_at', 'ASC']],
   });
+  const cutoff = conv.disappearingMinutes > 0
+    ? new Date(Date.now() - conv.disappearingMinutes * 60 * 1000)
+    : null;
+  const messages = cutoff ? allMessages.filter(m => new Date(m.created_at) > cutoff) : allMessages;
   const other = (conv as any).participants?.find((p: any) => p.id !== req.user!.id);
   res.json({
     id: conv.id,
@@ -131,12 +153,15 @@ router.get('/conversations/:id/', authenticate, async (req: AuthRequest, res: Re
       id: p.id, username: p.username, first_name: p.firstName, last_name: p.lastName, profile_picture: p.profilePicture,
     })),
     other_user: other ? { id: other.id, username: other.username, first_name: other.firstName, last_name: other.lastName, profile_picture: other.profilePicture } : null,
+    disappearing_minutes: conv.disappearingMinutes,
     messages: messages.map(m => ({
       id: m.id,
       conversation: m.conversationId,
       sender: { id: (m as any).sender?.id, first_name: (m as any).sender?.firstName, profile_picture: (m as any).sender?.profilePicture },
       text: m.text,
       image: m.image,
+      reply_to: (m as any).replyTo ? { id: (m as any).replyTo.id, text: (m as any).replyTo.text, image: (m as any).replyTo.image } : null,
+      post: (m as any).post ? { id: (m as any).post.id, caption: (m as any).post.caption } : null,
       is_read: m.isRead,
       created_at: m.created_at,
     })),
@@ -147,7 +172,7 @@ router.get('/conversations/:id/', authenticate, async (req: AuthRequest, res: Re
 
 // Start a conversation / send message
 router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequest, res: Response) => {
-  const { receiver_id, text } = req.body;
+  const { receiver_id, text, reply_to, post_id } = req.body;
   if (!receiver_id) { res.status(400).json({ error: 'receiver_id required' }); return; }
 
   // Find existing conversation
@@ -165,7 +190,8 @@ router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequ
   );
 
   if (!conv) {
-    conv = await Conversation.create() as any;
+    const friends = await areFriends(req.user!.id, receiver_id);
+    conv = await Conversation.create({ isRequest: !friends } as any) as any;
     await (conv as any).setParticipants([req.user!.id, receiver_id]);
   }
 
@@ -176,11 +202,17 @@ router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequ
     senderId: req.user!.id,
     text: text || '',
     image: req.file ? `/uploads/${req.file.filename}` : (req.body.image_url || null),
+    replyToId: reply_to ? Number(reply_to) : null,
+    postId: post_id ? Number(post_id) : null,
   } as any);
   await conv.update({ updated_at: new Date() });
 
   const full = await Message.findByPk(msg.id, {
-    include: [{ model: User, as: 'sender', attributes: ['id', 'firstName', 'lastName', 'profilePicture'] }],
+    include: [
+      { model: User, as: 'sender', attributes: ['id', 'firstName', 'lastName', 'profilePicture'] },
+      { model: Message, as: 'replyTo', attributes: ['id', 'text', 'image', 'senderId'] },
+      { model: Post, as: 'post', attributes: ['id', 'caption'] },
+    ],
   });
 
   const msgData = {
@@ -189,6 +221,8 @@ router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequ
     sender: { id: (full as any)?.sender?.id, first_name: (full as any)?.sender?.firstName, profile_picture: (full as any)?.sender?.profilePicture },
     text: msg.text,
     image: msg.image,
+    reply_to: (full as any)?.replyTo ? { id: (full as any).replyTo.id, text: (full as any).replyTo.text, image: (full as any).replyTo.image } : null,
+    post: (full as any)?.post ? { id: (full as any).post.id, caption: (full as any).post.caption } : null,
     is_read: msg.isRead,
     created_at: msg.created_at,
   };
@@ -199,6 +233,17 @@ router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequ
   sio?.to(`conversation:${conv.id}`).emit('message:new', msgData)
   sio?.to(`user:${receiver_id}`).emit('message:new', msgData)
   sio?.to(`user:${receiver_id}`).emit('conversation:updated', { conversationId: conv.id })
+
+  // Create notification for the receiver
+  const sender = req.user!
+  const body = text ? (text.length > 100 ? text.slice(0, 100) + '...' : text) : (msg.image ? 'Sent a photo' : 'Sent a message')
+  await createAndDeliverNotification({
+    userId: Number(receiver_id),
+    type: 'new_message',
+    title: `${sender.firstName} ${sender.lastName}`,
+    body,
+    actorId: sender.id,
+  });
 
   res.status(201).json(msgData);
 });
@@ -217,6 +262,10 @@ router.post('/conversations/:id/read/', authenticate, async (req: AuthRequest, r
   sio?.to(`conversation:${req.params.id}`).emit('message:read-receipt', {
     conversationId: parseInt(req.params.id as string),
     userId: req.user!.id,
+  });
+  // Also notify personal room so MessagesScreen gets the update
+  sio?.to(`user:${req.user!.id}`).emit('conversation:updated', {
+    conversationId: parseInt(req.params.id as string),
   });
   res.json({ detail: 'Read' });
 });
@@ -263,6 +312,61 @@ router.patch('/calls/:id/end/', authenticate, async (req: AuthRequest, res: Resp
   }
   await call.save();
   res.json({ detail: 'Call ended' });
+});
+
+// Accept message request
+router.post('/conversations/:id/accept-request/', authenticate, async (req: AuthRequest, res: Response) => {
+  const conv = await Conversation.findByPk(Number(req.params.id));
+  if (!conv) { res.status(404).json({ error: 'Conversation not found' }); return; }
+  const participants = await (conv as any).getParticipants();
+  const other = participants.find((p: any) => p.id !== req.user!.id);
+  if (!other) { res.status(400).json({ error: 'No other participant' }); return; }
+  conv.isRequest = false;
+  await conv.save();
+  // Create mutual friendship
+  const existing = await Friend.findOne({ where: { userId: req.user!.id, friendId: other.id } });
+  if (!existing) {
+    await Friend.create({ userId: req.user!.id, friendId: other.id } as any);
+    await Friend.create({ userId: other.id, friendId: req.user!.id } as any);
+  }
+  const sio = getIO();
+  sio?.to(`user:${req.user!.id}`).emit('conversation:updated', { conversationId: conv.id });
+  sio?.to(`user:${other.id}`).emit('conversation:updated', { conversationId: conv.id });
+  res.json({ detail: 'Request accepted' });
+});
+
+// Toggle disappearing messages
+router.patch('/conversations/:id/disappearing/', authenticate, async (req: AuthRequest, res: Response) => {
+  const conv = await Conversation.findByPk(Number(req.params.id));
+  if (!conv) { res.status(404).json({ error: 'Conversation not found' }); return; }
+  const participants = await (conv as any).getParticipants();
+  if (!participants.some((p: any) => p.id === req.user!.id)) {
+    res.status(403).json({ error: 'Not a participant' }); return;
+  }
+  const minutes = req.body.minutes !== undefined ? Math.max(0, Number(req.body.minutes)) : 0;
+  conv.disappearingMinutes = minutes;
+  await conv.save();
+  const sio = getIO();
+  sio?.to(`conversation:${conv.id}`).emit('conversation:disappearing-update', {
+    conversationId: conv.id,
+    disappearingMinutes: minutes,
+  });
+  res.json({ disappearing_minutes: minutes });
+});
+
+// Delete conversation (leave/remove for current user)
+router.delete('/conversations/:id/', authenticate, async (req: AuthRequest, res: Response) => {
+  const convId = Number(req.params.id);
+  const conv = await Conversation.findByPk(convId);
+  if (!conv) { res.status(404).json({ error: 'Conversation not found' }); return; }
+
+  // Remove the current user from participants
+  const participants = await (conv as any).getParticipants();
+  const isParticipant = participants.some((p: any) => p.id === req.user!.id);
+  if (!isParticipant) { res.status(403).json({ error: 'Not a participant' }); return; }
+
+  await (conv as any).removeParticipant(req.user!.id);
+  res.status(204).send();
 });
 
 // Get call history

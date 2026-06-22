@@ -24,6 +24,7 @@ export class User extends Model {
   declare pushComments: boolean;
   declare pushFollows: boolean;
   declare pushMessages: boolean;
+  declare pushCrosses: boolean;
   declare expoPushToken: string | null;
   declare phoneNumber: string;
   declare whoCanMessage: string;
@@ -75,6 +76,7 @@ export function initUser(sequelize: Sequelize): void {
     pushComments: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'push_comments' },
     pushFollows: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'push_follows' },
     pushMessages: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'push_messages' },
+    pushCrosses: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'push_crosses' },
     expoPushToken: { type: DataTypes.STRING(255), allowNull: true, defaultValue: null, field: 'expo_push_token' },
     phoneNumber: { type: DataTypes.STRING(20), defaultValue: '', field: 'phone_number' },
     whoCanMessage: { type: DataTypes.STRING(20), defaultValue: 'everyone', field: 'who_can_message' },
