@@ -185,6 +185,28 @@ router.get('/list/', authenticate, async (req: AuthRequest, res: Response) => {
   })));
 });
 
+// Get friends of a specific user (public)
+router.get('/list/:userId/', authenticate, async (req: AuthRequest, res: Response) => {
+  const userId = parseInt(req.params.userId as string);
+  if (isNaN(userId)) { res.status(400).json({ error: 'Invalid user ID' }); return; }
+  const friendIds = await Friend.findAll({
+    where: { userId },
+    attributes: ['friendId'],
+  });
+  const ids = friendIds.map(f => (f as any).friendId);
+  const friends = await User.findAll({ where: { id: ids } });
+  res.json(friends.map(f => ({
+    id: f.id,
+    username: f.username,
+    first_name: f.firstName,
+    last_name: f.lastName,
+    profile_picture: f.profilePicture,
+    bio: f.bio,
+    last_seen: f.lastSeen,
+    location: f.location,
+  })));
+});
+
 router.post('/block/', authenticate, async (req: AuthRequest, res: Response) => {
   const userId = req.body.user_id;
   if (!userId) { res.status(400).json({ error: 'user_id is required' }); return; }

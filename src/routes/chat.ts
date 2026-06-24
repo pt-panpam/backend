@@ -172,7 +172,10 @@ router.get('/conversations/:id/', authenticate, async (req: AuthRequest, res: Re
 
 // Start a conversation / send message
 router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequest, res: Response) => {
-  const { receiver_id, text, reply_to, post_id } = req.body;
+  const receiver_id = Number(req.body.receiver_id);
+  const text = req.body.text;
+  const reply_to = req.body.reply_to;
+  const post_id = req.body.post_id;
   if (!receiver_id) { res.status(400).json({ error: 'receiver_id required' }); return; }
 
   // Find existing conversation
@@ -244,6 +247,72 @@ router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequ
     body,
     actorId: sender.id,
   });
+
+  res.status(201).json(msgData);
+});
+
+// Send voice message
+router.post('/send-voice/', authenticate, upload.single('voice'), async (req: AuthRequest, res: Response) => {
+  const receiver_id = Number(req.body.receiver_id);
+  if (!receiver_id) { res.status(400).json({ error: 'receiver_id required' }); return; }
+  if (!req.file) { res.status(400).json({ error: 'voice file required' }); return; }
+
+  // Find or create conversation (same logic as send route)
+  const allConvs = await Conversation.findAll({
+    include: [{
+      model: User,
+      as: 'participants',
+      through: { attributes: [] },
+    }],
+  });
+  let conv = allConvs.find(c =>
+    (c as any).participants?.length === 2 &&
+    (c as any).participants?.some((p: any) => p.id === req.user!.id) &&
+    (c as any).participants?.some((p: any) => p.id === receiver_id)
+  );
+
+  if (!conv) {
+    const { Op } = require('sequelize');
+    const { Friend } = require('../models/Friend');
+    const friends = await Friend.findOne({
+      where: {
+        [Op.or]: [
+          { userId: req.user!.id, friendId: receiver_id },
+          { userId: receiver_id, friendId: req.user!.id },
+        ],
+      },
+    });
+    conv = await Conversation.create({ isRequest: !friends } as any) as any;
+    await (conv as any).setParticipants([req.user!.id, receiver_id]);
+  }
+
+  if (!conv) { res.status(500).json({ error: 'Failed to create conversation' }); return; }
+
+  const msg = await Message.create({
+    conversationId: conv.id,
+    senderId: req.user!.id,
+    text: '',
+    audio: `/uploads/${req.file.filename}`,
+  } as any);
+  await conv.update({ updated_at: new Date() });
+
+  const msgData = {
+    id: msg.id,
+    conversation: msg.conversationId,
+    sender: { id: req.user!.id },
+    text: '',
+    audio: msg.audio,
+    image: null,
+    reply_to: null,
+    post: null,
+    is_read: msg.isRead,
+    created_at: msg.created_at,
+  };
+
+  const sio = getIO();
+  sio?.to(`conversation:${conv.id}`).emit('message:new', msgData);
+  sio?.to(`user:${receiver_id}`).emit('message:new', msgData);
+  sio?.to(`user:${receiver_id}`).emit('conversation:updated', { conversationId: conv.id });
 
   res.status(201).json(msgData);
 });
@@ -337,21 +406,26 @@ router.post('/conversations/:id/accept-request/', authenticate, async (req: Auth
 
 // Toggle disappearing messages
 router.patch('/conversations/:id/disappearing/', authenticate, async (req: AuthRequest, res: Response) => {
-  const conv = await Conversation.findByPk(Number(req.params.id));
-  if (!conv) { res.status(404).json({ error: 'Conversation not found' }); return; }
-  const participants = await (conv as any).getParticipants();
-  if (!participants.some((p: any) => p.id === req.user!.id)) {
-    res.status(403).json({ error: 'Not a participant' }); return;
+  try {
+    const conv = await Conversation.findByPk(Number(req.params.id));
+    if (!conv) { res.status(404).json({ error: 'Conversation not found' }); return; }
+    const participants = await (conv as any).getParticipants();
+    if (!participants.some((p: any) => p.id === req.user!.id)) {
+      res.status(403).json({ error: 'Not a participant' }); return;
+    }
+    const minutes = req.body.minutes !== undefined ? Math.max(0, Number(req.body.minutes)) : 0;
+    conv.disappearingMinutes = minutes;
+    await conv.save();
+    const sio = getIO();
+    sio?.to(`conversation:${conv.id}`).emit('conversation:disappearing-update', {
+      conversationId: conv.id,
+      disappearingMinutes: minutes,
+    });
+    res.json({ disappearing_minutes: minutes });
+  } catch (err: any) {
+    console.error('[disappearing] error:', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
   }
-  const minutes = req.body.minutes !== undefined ? Math.max(0, Number(req.body.minutes)) : 0;
-  conv.disappearingMinutes = minutes;
-  await conv.save();
-  const sio = getIO();
-  sio?.to(`conversation:${conv.id}`).emit('conversation:disappearing-update', {
-    conversationId: conv.id,
-    disappearingMinutes: minutes,
-  });
-  res.json({ disappearing_minutes: minutes });
 });
 
 // Delete conversation (leave/remove for current user)

@@ -40,6 +40,9 @@ export async function initDatabase(): Promise<void> {
       'ALTER TABLE `users` ADD COLUMN `is_live` TINYINT(1) DEFAULT 0;',
       'ALTER TABLE `cross_settings` ADD COLUMN `reveal_delay_minutes` INTEGER DEFAULT 60;',
       'ALTER TABLE `users` ADD COLUMN `expo_push_token` VARCHAR(255) DEFAULT NULL;',
+      'ALTER TABLE `users` ADD COLUMN `push_crosses` TINYINT(1) DEFAULT 1;',
+      'ALTER TABLE `conversations` ADD COLUMN `is_request` TINYINT(1) DEFAULT 0;',
+      'ALTER TABLE `conversations` ADD COLUMN `disappearing_minutes` INTEGER DEFAULT 0;',
     ];
     for (const sql of migrations) {
       try { await sequelize.query(sql); } catch { /* column already exists */ }

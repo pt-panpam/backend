@@ -117,9 +117,10 @@ router.post('/create/', authenticate, upload.single('uploaded_photos'), async (r
     isActive: true,
   } as any);
   if (req.file) {
-    await PostPhoto.create({ postId: post.id, image: `/uploads/${req.file.filename}`, order: 0 } as any);
+    const isVideo = req.file.mimetype.startsWith('video/');
+    await PostPhoto.create({ postId: post.id, image: `/uploads/${req.file.filename}`, order: 0, type: isVideo ? 'video' : 'photo' } as any);
   } else if (req.body.image_url) {
-    await PostPhoto.create({ postId: post.id, image: req.body.image_url, order: 0 } as any);
+    await PostPhoto.create({ postId: post.id, image: req.body.image_url, order: 0, type: 'photo' } as any);
   }
   const full = await Post.findByPk(post.id, {
     include: [

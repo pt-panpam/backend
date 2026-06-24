@@ -93,6 +93,7 @@ export function serializePost(post: any, currentUserId?: number) {
       id: p.id,
       image: p.image,
       order: p.order,
+      type: p.type || 'photo',
     })),
     like_count: post.likeCount || 0,
     has_liked: post.hasLiked || false,
