@@ -38,7 +38,7 @@ export class RouteService {
 
   async connect(): Promise<boolean> {
     try {
-      this.pool = new Pool({ connectionString: env.PG_DATABASE_URL, max: 10 });
+      this.pool = new Pool({ connectionString: env.PG_DATABASE_URL, max: 10, ssl: { rejectUnauthorized: false } });
 
       // Test connection
       const client = await this.pool.connect();
@@ -50,7 +50,7 @@ export class RouteService {
       return true;
     } catch (err: any) {
       this.status = 'error';
-      console.warn('🟡 PostgreSQL/TimescaleDB unavailable — route storage disabled');
+      console.warn('🟡 PostgreSQL/TimescaleDB unavailable —', err.message || err);
       this.pool = null;
       return false;
     }

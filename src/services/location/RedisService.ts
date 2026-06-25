@@ -24,26 +24,21 @@ export class RedisService {
 
   async connect(): Promise<boolean> {
     try {
-      this.client = new Redis(env.REDIS_URL, {
+      const redisOpts = {
         maxRetriesPerRequest: 1,
-        retryStrategy: (times) => {
+        retryStrategy: (times: number) => {
           if (times > 3) return null;
           return Math.min(times * 200, 2000);
         },
         lazyConnect: true,
         enableOfflineQueue: false,
-      });
+        tls: env.REDIS_URL.startsWith('rediss://') ? {} : undefined,
+      } as any;
+
+      this.client = new Redis(env.REDIS_URL, redisOpts);
       this.client.on('error', () => {});
 
-      this.subscriber = new Redis(env.REDIS_URL, {
-        maxRetriesPerRequest: 1,
-        retryStrategy: (times) => {
-          if (times > 3) return null;
-          return Math.min(times * 200, 2000);
-        },
-        lazyConnect: true,
-        enableOfflineQueue: false,
-      });
+      this.subscriber = new Redis(env.REDIS_URL, redisOpts);
       this.subscriber.on('error', () => {});
 
       await Promise.all([this.client.connect(), this.subscriber.connect()]);
@@ -56,9 +51,9 @@ export class RedisService {
       this.status = 'connected';
       console.log('🟢 Redis connected');
       return true;
-    } catch (err) {
+    } catch (err: any) {
       this.status = 'error';
-      console.warn('🟡 Redis unavailable — crossing detection will use DB fallback');
+      console.warn('🟡 Redis unavailable —', err.message || err);
       this.client = null;
       this.subscriber = null;
       return false;
