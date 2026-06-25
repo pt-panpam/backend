@@ -38,7 +38,13 @@ export class RouteService {
 
   async connect(): Promise<boolean> {
     try {
-      this.pool = new Pool({ connectionString: env.PG_DATABASE_URL, max: 10 });
+      const pgUrl = env.PG_DATABASE_URL;
+      const needsSsl = !pgUrl.includes('localhost') && !pgUrl.includes('127.0.0.1');
+      this.pool = new Pool({
+        connectionString: pgUrl,
+        max: 10,
+        ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
+      });
 
       // Test connection
       const client = await this.pool.connect();
