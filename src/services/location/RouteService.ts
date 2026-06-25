@@ -38,7 +38,7 @@ export class RouteService {
 
   async connect(): Promise<boolean> {
     try {
-      this.pool = new Pool({ connectionString: env.PG_DATABASE_URL, max: 10, ssl: { rejectUnauthorized: false } });
+      this.pool = new Pool({ connectionString: env.PG_DATABASE_URL, max: 10 });
 
       // Test connection
       const client = await this.pool.connect();
