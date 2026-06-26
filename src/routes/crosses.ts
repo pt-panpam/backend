@@ -15,8 +15,8 @@ router.get('/settings/', authenticate, async (req: AuthRequest, res: Response) =
     settings = await CrossSettings.create({ userId: req.user!.id } as any);
   }
   res.json({
-    review_hour: settings.reviewHour,
-    review_minute: settings.reviewMinute,
+    reveal_schedule_hour_1: settings.revealScheduleHour1,
+    reveal_schedule_hour_2: settings.revealScheduleHour2,
     reveal_delay_minutes: settings.revealDelayMinutes,
     updated_at: settings.updated_at,
     can_change: settings.canChange(),
@@ -33,13 +33,13 @@ router.patch('/settings/', authenticate, async (req: AuthRequest, res: Response)
     res.status(400).json({ error: 'Cannot change settings yet. 10-day cooldown applies.' });
     return;
   }
-  if (req.body.review_hour !== undefined) settings.reviewHour = req.body.review_hour;
-  if (req.body.review_minute !== undefined) settings.reviewMinute = req.body.review_minute;
+  if (req.body.reveal_schedule_hour_1 !== undefined) settings.revealScheduleHour1 = req.body.reveal_schedule_hour_1;
+  if (req.body.reveal_schedule_hour_2 !== undefined) settings.revealScheduleHour2 = req.body.reveal_schedule_hour_2;
   if (req.body.reveal_delay_minutes !== undefined) settings.revealDelayMinutes = req.body.reveal_delay_minutes;
   await settings.save();
   res.json({
-    review_hour: settings.reviewHour,
-    review_minute: settings.reviewMinute,
+    reveal_schedule_hour_1: settings.revealScheduleHour1,
+    reveal_schedule_hour_2: settings.revealScheduleHour2,
     reveal_delay_minutes: settings.revealDelayMinutes,
     updated_at: settings.updated_at,
     can_change: settings.canChange(),

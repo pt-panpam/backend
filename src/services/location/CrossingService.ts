@@ -121,6 +121,16 @@ export class CrossingService {
             },
           });
 
+          // Skip if a cross already exists for this pair in the last hour
+          const recentCross = await CrossEvent.findOne({
+            where: {
+              user1Id: Math.min(userId, otherId),
+              user2Id: Math.max(userId, otherId),
+              crossedAt: { [Op.gte]: new Date(Date.now() - 60 * 60 * 1000) },
+            },
+          });
+          if (recentCross) continue;
+
           // Create CrossEvent
           try {
             const event = await CrossEvent.create({

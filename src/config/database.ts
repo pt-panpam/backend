@@ -45,6 +45,8 @@ export async function initDatabase(): Promise<void> {
       'ALTER TABLE `conversations` ADD COLUMN `disappearing_minutes` INTEGER DEFAULT 0;',
       'ALTER TABLE `post_photos` ADD COLUMN `type` VARCHAR(10) DEFAULT \'photo\';',
       'ALTER TABLE `messages` ADD COLUMN `audio` VARCHAR(500) DEFAULT NULL;',
+      'ALTER TABLE `cross_settings` ADD COLUMN `reveal_schedule_hour_1` INTEGER DEFAULT 10;',
+      'ALTER TABLE `cross_settings` ADD COLUMN `reveal_schedule_hour_2` INTEGER DEFAULT 22;',
     ];
     for (const sql of migrations) {
       try { await sequelize.query(sql); } catch { /* column already exists */ }
