@@ -4,6 +4,7 @@ import { User } from '../models/User';
 import { FriendRequest } from '../models/FriendRequest';
 import { Friend } from '../models/Friend';
 import { Block } from '../models/Block';
+import { CrossEvent } from '../models/CrossEvent';
 import { createAndDeliverNotification } from '../services/NotificationService';
 import { AuthRequest, authenticate } from '../middleware/auth';
 
@@ -204,6 +205,58 @@ router.get('/list/:userId/', authenticate, async (req: AuthRequest, res: Respons
     bio: f.bio,
     last_seen: f.lastSeen,
     location: f.location,
+  })));
+});
+
+// Get friend suggestions from crossed paths
+router.get('/suggestions/', authenticate, async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.id;
+
+  const crossedIds = await CrossEvent.findAll({
+    where: {
+      [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
+    },
+    attributes: ['user1Id', 'user2Id'],
+  });
+
+  const rawIds = new Set<number>();
+  for (const e of crossedIds) {
+    const otherId = e.user1Id === userId ? e.user2Id : e.user1Id;
+    if (otherId !== userId) rawIds.add(otherId);
+  }
+
+  if (rawIds.size === 0) { res.json([]); return; }
+
+  const friendIds = (await Friend.findAll({
+    where: { [Op.or]: [{ userId }, { friendId: userId }] },
+    attributes: ['userId', 'friendId'],
+  })).flatMap(f => (f as any).userId === userId ? [(f as any).friendId] : [(f as any).userId]);
+
+  const friendRequestIds = (await FriendRequest.findAll({
+    where: {
+      [Op.or]: [{ fromUserId: userId }, { toUserId: userId }],
+      status: 'pending',
+    },
+    attributes: ['fromUserId', 'toUserId'],
+  })).flatMap(r => (r as any).fromUserId === userId ? [(r as any).toUserId] : [(r as any).fromUserId]);
+
+  const excludeIds = new Set([...friendIds, ...friendRequestIds, userId]);
+  const suggestionIds = [...rawIds].filter(id => !excludeIds.has(id));
+
+  if (suggestionIds.length === 0) { res.json([]); return; }
+
+  const users = await User.findAll({
+    where: { id: suggestionIds, isActive: true },
+    attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture', 'location'],
+  });
+
+  res.json(users.map(u => ({
+    id: u.id,
+    username: u.username,
+    first_name: u.firstName,
+    last_name: u.lastName,
+    profile_picture: u.profilePicture,
+    location: u.location,
   })));
 });
 

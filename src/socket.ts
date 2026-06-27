@@ -8,7 +8,7 @@ import { Message } from './models/Message';
 import { Post } from './models/Post';
 import { ConversationReadStatus } from './models/ConversationReadStatus';
 import { Friend } from './models/Friend';
-import { createAndDeliverNotification } from './services/NotificationService';
+import { sendExpoPush } from './services/NotificationService';
 
 interface AuthenticatedSocket extends Socket {
   userId?: number;
@@ -146,17 +146,16 @@ export function setupSocket(server: HTTPServer): Server {
           io.to(`user:${data.receiverId}`).emit('message:new', messageData);
           io.to(`user:${data.receiverId}`).emit('conversation:updated', { conversationId: convId });
 
-          // Create notification
+          // Send push notification only (no DB notification record)
+          const recipient = await User.findByPk(data.receiverId, { attributes: ['id', 'firstName', 'lastName', 'expoPushToken', 'pushMessages'] });
           const sender = await User.findByPk(userId, { attributes: ['id', 'firstName', 'lastName'] });
-          if (sender) {
+          if (recipient && recipient.expoPushToken && recipient.pushMessages && sender) {
             const body = data.text
               ? (data.text.length > 100 ? data.text.slice(0, 100) + '...' : data.text)
               : (data.image ? 'Sent a photo' : 'Sent a message');
-            await createAndDeliverNotification({
-              userId: data.receiverId,
+            await sendExpoPush(recipient.expoPushToken, `${sender.firstName} ${sender.lastName}`, body, {
               type: 'new_message',
-              title: `${sender.firstName} ${sender.lastName}`,
-              body,
+              conversationId: convId,
               actorId: userId,
             });
           }
@@ -241,36 +240,6 @@ export function setupSocket(server: HTTPServer): Server {
 
     socket.on('cross:unsubscribe', () => {
       socket.leave(`cross:${userId}`);
-    });
-
-    // Start location sharing (periodic location push from client)
-    socket.on('location:start', () => {
-      socket.join(`location:${userId}`);
-      io.emit('location:sharing-started', { userId });
-    });
-
-    socket.on('location:stop', () => {
-      socket.leave(`location:${userId}`);
-      io.emit('location:sharing-stopped', { userId });
-    });
-
-    // Client sends location update via WS (alternative to REST)
-    socket.on('location:update', async (data: { latitude: number; longitude: number }) => {
-      try {
-        const { H3Service } = await import('./services/location/H3Service');
-        const { CrossingService } = await import('./services/location/CrossingService');
-        const hexId = H3Service.latLngToHex(data.latitude, data.longitude);
-        const crossing = CrossingService.getInstance();
-        const result = await crossing.updateLocation(userId, data.latitude, data.longitude);
-        // Echo back to sender
-        socket.emit('location:updated', {
-          hex_id: result.hexId,
-          crossing_detected: result.crossingDetected,
-          crossed_with: result.crossedWith,
-        });
-      } catch (err: any) {
-        console.error('location:update error:', err.message);
-      }
     });
 
     // Disconnect

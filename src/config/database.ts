@@ -41,6 +41,7 @@ export async function initDatabase(): Promise<void> {
       'ALTER TABLE `cross_settings` ADD COLUMN `reveal_delay_minutes` INTEGER DEFAULT 60;',
       'ALTER TABLE `users` ADD COLUMN `expo_push_token` VARCHAR(255) DEFAULT NULL;',
       'ALTER TABLE `users` ADD COLUMN `push_crosses` TINYINT(1) DEFAULT 1;',
+      'ALTER TABLE `users` ADD COLUMN `looking_for` VARCHAR(30) DEFAULT \'\';',
       'ALTER TABLE `conversations` ADD COLUMN `is_request` TINYINT(1) DEFAULT 0;',
       'ALTER TABLE `conversations` ADD COLUMN `disappearing_minutes` INTEGER DEFAULT 0;',
       'ALTER TABLE `post_photos` ADD COLUMN `type` VARCHAR(10) DEFAULT \'photo\';',

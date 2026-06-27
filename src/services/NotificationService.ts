@@ -63,7 +63,7 @@ async function serializeNotification(notification: Notification) {
   };
 }
 
-async function sendExpoPush(
+export async function sendExpoPush(
   token: string,
   title: string,
   body: string,

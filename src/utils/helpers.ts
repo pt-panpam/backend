@@ -34,6 +34,7 @@ export function serializeUser(user: User, currentUserId?: number) {
     latitude: user.latitude,
     longitude: user.longitude,
     hobbies: user.hobbies,
+    looking_for: user.lookingFor,
     onboarding_complete: user.onboardingComplete,
     is_private: user.isPrivate,
     show_online_status: user.showOnlineStatus,

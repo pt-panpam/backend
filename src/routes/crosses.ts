@@ -5,6 +5,7 @@ import { CrossSettings } from '../models/CrossSettings';
 import { CrossEvent } from '../models/CrossEvent';
 import { Friend } from '../models/Friend';
 import { AuthRequest, authenticate } from '../middleware/auth';
+import { CrossingService } from '../services/location/CrossingService';
 
 const router = Router();
 
@@ -14,12 +15,13 @@ router.get('/settings/', authenticate, async (req: AuthRequest, res: Response) =
   if (!settings) {
     settings = await CrossSettings.create({ userId: req.user!.id } as any);
   }
+  const service = CrossingService.getInstance();
   res.json({
     reveal_schedule_hour_1: settings.revealScheduleHour1,
     reveal_schedule_hour_2: settings.revealScheduleHour2,
-    reveal_delay_minutes: settings.revealDelayMinutes,
     updated_at: settings.updated_at,
     can_change: settings.canChange(),
+    next_reveal_at: service.getNextRevealLabel({ hour1: settings.revealScheduleHour1, hour2: settings.revealScheduleHour2 }),
   });
 });
 
@@ -35,61 +37,29 @@ router.patch('/settings/', authenticate, async (req: AuthRequest, res: Response)
   }
   if (req.body.reveal_schedule_hour_1 !== undefined) settings.revealScheduleHour1 = req.body.reveal_schedule_hour_1;
   if (req.body.reveal_schedule_hour_2 !== undefined) settings.revealScheduleHour2 = req.body.reveal_schedule_hour_2;
-  if (req.body.reveal_delay_minutes !== undefined) settings.revealDelayMinutes = req.body.reveal_delay_minutes;
   await settings.save();
+  const service = CrossingService.getInstance();
   res.json({
     reveal_schedule_hour_1: settings.revealScheduleHour1,
     reveal_schedule_hour_2: settings.revealScheduleHour2,
-    reveal_delay_minutes: settings.revealDelayMinutes,
     updated_at: settings.updated_at,
     can_change: settings.canChange(),
+    next_reveal_at: service.getNextRevealLabel({ hour1: settings.revealScheduleHour1, hour2: settings.revealScheduleHour2 }),
   });
 });
 
-// Get cross events
+// Get cross events (last 24h only)
 router.get('/events/', authenticate, async (req: AuthRequest, res: Response) => {
-  const events = await CrossEvent.findAll({
-    where: {
-      [Op.or]: [{ user1Id: req.user!.id }, { user2Id: req.user!.id }],
-    },
-    order: [['crossed_at', 'DESC']],
-    limit: 50,
-  });
+  const service = CrossingService.getInstance();
+  const events = await service.getRecentCrosses(req.user!.id);
+  res.json({ results: events });
+});
 
-  const results = await Promise.all(events.map(async e => {
-    const otherId = e.user1Id === req.user!.id ? e.user2Id : e.user1Id;
-    const other = await User.findByPk(otherId);
-    const isFriend = other ? !!(await Friend.findOne({ where: { userId: req.user!.id, friendId: other.id } })) : false;
-
-    // Jitter for non-participants
-    let displayLat = e.latitude;
-    let displayLng = e.longitude;
-    if (!isFriend) {
-      displayLat = e.latitude + (Math.random() - 0.5) * 0.02;
-      displayLng = e.longitude + (Math.random() - 0.5) * 0.02;
-    }
-
-    return {
-      id: e.id,
-      other_user: other ? {
-        id: other.id,
-        username: other.username,
-        first_name: other.firstName,
-        last_name: other.lastName,
-        profile_picture: other.profilePicture,
-        age: other.age,
-        location: other.location,
-      } : null,
-      latitude: e.latitude,
-      longitude: e.longitude,
-      display_latitude: displayLat,
-      display_longitude: displayLng,
-      crossed_at: e.crossedAt,
-      published: e.published,
-    };
-  }));
-
-  res.json({ results });
+// Get route timeline (private, last 24h)
+router.get('/timeline/', authenticate, async (req: AuthRequest, res: Response) => {
+  const service = CrossingService.getInstance();
+  const timeline = await service.getRouteTimeline(req.user!.id);
+  res.json({ results: timeline });
 });
 
 // Publish cross events for review window

@@ -1,15 +1,32 @@
 import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
+import { sequelize } from '../config/database';
 import { User } from '../models/User';
 import { ProfileGallery } from '../models/ProfileGallery';
 import { ProfileLike } from '../models/ProfileLike';
 import { Report } from '../models/Report';
+import { Post } from '../models/Post';
+import { PostLike } from '../models/PostLike';
+import { SavedPost } from '../models/SavedPost';
+import { Comment } from '../models/Comment';
+import { Message } from '../models/Message';
+import { Conversation } from '../models/Conversation';
+import { ConversationReadStatus } from '../models/ConversationReadStatus';
+import { Call } from '../models/Call';
+import { Friend } from '../models/Friend';
+import { FriendRequest } from '../models/FriendRequest';
+import { Block } from '../models/Block';
+import { Notification } from '../models/Notification';
+import { CrossSettings } from '../models/CrossSettings';
+import { CrossEvent } from '../models/CrossEvent';
 import { AuthRequest, authenticate } from '../middleware/auth';
 import { upload } from '../middleware/upload';
 import { generateTokens, hashPassword, comparePassword, serializeUser } from '../utils/helpers';
 import { createAndDeliverNotification } from '../services/NotificationService';
 
+const GOOGLE_IOS_CLIENT_ID = '399194215612-3mkc25nqrdim0152lvqc7oi510uukld4.apps.googleusercontent.com';
+const GOOGLE_ANDROID_CLIENT_ID = '399194215612-jjg6mv3hm4i0usmj90c9j3bng2i17nvm.apps.googleusercontent.com';
 const googleClient = new OAuth2Client();
 
 const router = Router();
@@ -20,12 +37,9 @@ router.post('/google/', async (req: AuthRequest, res: Response) => {
     const { idToken } = req.body;
     if (!idToken) { res.status(400).json({ error: 'idToken required' }); return; }
 
-    const ticket = await googleClient.verifyIdToken({ idToken, audience: undefined });
+    const ticket = await googleClient.verifyIdToken({ idToken, audience: [GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID] });
     const payload = ticket.getPayload();
     if (!payload || !payload.sub) { res.status(401).json({ error: 'Invalid Google token' }); return; }
-    if (payload.iss && !['accounts.google.com', 'https://accounts.google.com'].includes(payload.iss)) {
-      res.status(401).json({ error: 'Invalid issuer' }); return;
-    }
 
     const googleId = payload.sub;
     const email = payload.email || '';
@@ -33,13 +47,18 @@ router.post('/google/', async (req: AuthRequest, res: Response) => {
     const picture = payload.picture || '';
 
     let user = await User.findOne({ where: { googleId } });
-    let created = false;
-    if (!user) {
+    if (user) {
+      if (!user.isActive) {
+        await User.update({ isActive: true, profilePicture: picture || user.profilePicture }, { where: { id: user.id } });
+        user = await User.findByPk(user.id);
+      }
+    } else {
       user = await User.findOne({ where: { email } });
       if (user) {
-        user.googleId = googleId;
-        user.profilePicture = picture || user.profilePicture;
-        await user.save();
+        const updates: any = { googleId, profilePicture: picture || user.profilePicture };
+        if (!user.isActive) updates.isActive = true;
+        await User.update(updates, { where: { id: user.id } });
+        user = await User.findByPk(user.id);
       } else {
         const baseUsername = email.split('@')[0] || `user_${googleId.slice(0, 8)}`;
         let username = baseUsername;
@@ -56,25 +75,24 @@ router.post('/google/', async (req: AuthRequest, res: Response) => {
           firstName: name.split(' ')[0] || '',
           lastName: name.split(' ').slice(1).join(' ') || '',
         } as any);
-        created = true;
       }
     }
 
-    const tokens = generateTokens(user);
-    res.json({ ...tokens, onboarding_complete: user.onboardingComplete });
+    const tokens = generateTokens(user!);
+    res.json({ ...tokens, onboarding_complete: user!.onboardingComplete });
   } catch (err: any) {
     console.error('Google auth error:', err.message);
-    res.status(401).json({ error: 'Invalid Google token' });
+    res.status(401).json({ error: `Google auth failed: ${err.message}` });
   }
 });
 
 // Signup — complete onboarding with Google data
 router.post('/signup/', async (req: AuthRequest, res: Response) => {
   try {
-    const { idToken, first_name, date_of_birth, sex, hobbies, bio, location, latitude, longitude } = req.body;
+    const { idToken, first_name, date_of_birth, sex, looking_for, hobbies, bio, location, latitude, longitude } = req.body;
     if (!idToken) { res.status(400).json({ error: 'idToken required' }); return; }
 
-    const ticket = await googleClient.verifyIdToken({ idToken, audience: undefined });
+    const ticket = await googleClient.verifyIdToken({ idToken, audience: [GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID] });
     const payload = ticket.getPayload();
     if (!payload || !payload.sub) { res.status(401).json({ error: 'Invalid Google token' }); return; }
 
@@ -88,6 +106,7 @@ router.post('/signup/', async (req: AuthRequest, res: Response) => {
       user.firstName = first_name || user.firstName;
       user.dateOfBirth = date_of_birth || user.dateOfBirth;
       user.sex = sex || user.sex;
+      if (looking_for !== undefined) user.lookingFor = looking_for;
       user.hobbies = hobbies || user.hobbies;
       user.bio = bio !== undefined ? bio : user.bio;
       user.location = location || user.location;
@@ -117,6 +136,7 @@ router.post('/signup/', async (req: AuthRequest, res: Response) => {
       lastName: name.split(' ').slice(1).join(' ') || '',
       dateOfBirth: date_of_birth || null,
       sex: sex || '',
+      lookingFor: looking_for || '',
       hobbies: hobbies || [],
       bio: bio || '',
       location: location || '',
@@ -198,11 +218,51 @@ router.post('/user/change-password/', authenticate, async (req: AuthRequest, res
   res.json({ detail: 'Password changed successfully' });
 });
 
-// Delete account
+// Delete account — permanently removes all user data
 router.delete('/user/delete/', authenticate, async (req: AuthRequest, res: Response) => {
-  req.user!.isActive = false;
-  await req.user!.save();
-  res.status(204).send();
+  const userId = req.user!.id;
+  const t = await sequelize.transaction();
+  try {
+    await Post.destroy({ where: { userId }, transaction: t });
+    await PostLike.destroy({ where: { userId }, transaction: t });
+    await SavedPost.destroy({ where: { userId }, transaction: t });
+    await Comment.destroy({ where: { userId }, transaction: t });
+    await Message.destroy({ where: { senderId: userId }, transaction: t });
+    await ConversationReadStatus.destroy({ where: { userId }, transaction: t });
+    await Friend.destroy({ where: { userId }, transaction: t });
+    await Friend.destroy({ where: { friendId: userId }, transaction: t });
+    await FriendRequest.destroy({ where: { fromUserId: userId }, transaction: t });
+    await FriendRequest.destroy({ where: { toUserId: userId }, transaction: t });
+    await Block.destroy({ where: { blockerId: userId }, transaction: t });
+    await Block.destroy({ where: { blockedId: userId }, transaction: t });
+    await Notification.destroy({ where: { userId }, transaction: t });
+    await Notification.destroy({ where: { actorId: userId }, transaction: t });
+    await Call.destroy({ where: { callerId: userId }, transaction: t });
+    await Call.destroy({ where: { calleeId: userId }, transaction: t });
+    await CrossSettings.destroy({ where: { userId }, transaction: t });
+    await CrossEvent.destroy({ where: { user1Id: userId }, transaction: t });
+    await CrossEvent.destroy({ where: { user2Id: userId }, transaction: t });
+    await ProfileGallery.destroy({ where: { userId }, transaction: t });
+    await ProfileLike.destroy({ where: { userId }, transaction: t });
+    await ProfileLike.destroy({ where: { likedUserId: userId }, transaction: t });
+    await Report.destroy({ where: { reporterId: userId }, transaction: t });
+    await Report.destroy({ where: { reportedUserId: userId }, transaction: t });
+
+    // Remove user from conversation participants (junction table)
+    await sequelize.query(
+      'DELETE FROM conversation_participants WHERE user_id = ?',
+      { replacements: [userId], transaction: t }
+    );
+
+    await User.destroy({ where: { id: userId }, transaction: t });
+
+    await t.commit();
+    res.status(204).send();
+  } catch (err) {
+    await t.rollback();
+    console.error('Delete account error:', err);
+    res.status(500).json({ error: 'Failed to delete account' });
+  }
 });
 
 // Get user by ID (public profile)
@@ -248,10 +308,12 @@ router.get('/users/', authenticate, async (req: AuthRequest, res: Response) => {
 router.patch('/user/profile/', authenticate, async (req: AuthRequest, res: Response) => {
   const user = req.user!;
   if (req.body.first_name !== undefined) user.firstName = req.body.first_name;
+  if (req.body.last_name !== undefined) user.lastName = req.body.last_name;
   if (req.body.bio !== undefined) user.bio = req.body.bio;
   if (req.body.location !== undefined) user.location = req.body.location;
   if (req.body.date_of_birth !== undefined) user.dateOfBirth = req.body.date_of_birth;
   if (req.body.sex !== undefined) user.sex = req.body.sex;
+  if (req.body.looking_for !== undefined) user.lookingFor = req.body.looking_for;
   if (req.body.hobbies !== undefined) user.hobbies = req.body.hobbies;
   if (req.body.latitude !== undefined) user.latitude = req.body.latitude;
   if (req.body.longitude !== undefined) user.longitude = req.body.longitude;

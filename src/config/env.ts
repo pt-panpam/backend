@@ -12,6 +12,6 @@ export const env = {
   UPLOAD_DIR: process.env.UPLOAD_DIR || './uploads',
   CORS_ORIGINS: (process.env.CORS_ORIGINS || 'http://localhost:8081,http://127.0.0.1:8081').split(','),
   REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
-  PG_DATABASE_URL: process.env.PG_DATABASE_URL || 'postgresql://localhost:5432/icross',
+  PG_DATABASE_URL: process.env.PG_DATABASE_URL || 'postgresql://localhost:5432/cross',
   H3_RESOLUTION: parseInt(process.env.H3_RESOLUTION || '9', 10),
 };

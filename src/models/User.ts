@@ -11,6 +11,7 @@ export class User extends Model {
   declare profilePicture: string;
   declare dateOfBirth: string | null;
   declare sex: string;
+  declare lookingFor: string;
   declare bio: string;
   declare location: string;
   declare latitude: number | null;
@@ -63,6 +64,7 @@ export function initUser(sequelize: Sequelize): void {
     profilePicture: { type: DataTypes.STRING(500), defaultValue: '', field: 'profile_picture' },
     dateOfBirth: { type: DataTypes.DATEONLY, allowNull: true, field: 'date_of_birth' },
     sex: { type: DataTypes.STRING(30), defaultValue: '' },
+    lookingFor: { type: DataTypes.STRING(30), defaultValue: '', field: 'looking_for' },
     bio: { type: DataTypes.TEXT, defaultValue: '' },
     location: { type: DataTypes.STRING(255), defaultValue: '' },
     latitude: { type: DataTypes.FLOAT, allowNull: true },
