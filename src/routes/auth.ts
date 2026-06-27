@@ -25,6 +25,7 @@ import { upload } from '../middleware/upload';
 import { generateTokens, hashPassword, comparePassword, serializeUser } from '../utils/helpers';
 import { createAndDeliverNotification } from '../services/NotificationService';
 
+const GOOGLE_WEB_CLIENT_ID = '399194215612-7f064r5thrf4bsksuodtfif851fsesqk.apps.googleusercontent.com';
 const GOOGLE_IOS_CLIENT_ID = '399194215612-3mkc25nqrdim0152lvqc7oi510uukld4.apps.googleusercontent.com';
 const GOOGLE_ANDROID_CLIENT_ID = '399194215612-jjg6mv3hm4i0usmj90c9j3bng2i17nvm.apps.googleusercontent.com';
 const googleClient = new OAuth2Client();
@@ -37,7 +38,7 @@ router.post('/google/', async (req: AuthRequest, res: Response) => {
     const { idToken } = req.body;
     if (!idToken) { res.status(400).json({ error: 'idToken required' }); return; }
 
-    const ticket = await googleClient.verifyIdToken({ idToken, audience: [GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID] });
+    const ticket = await googleClient.verifyIdToken({ idToken, audience: [GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID, GOOGLE_WEB_CLIENT_ID] });
     const payload = ticket.getPayload();
     if (!payload || !payload.sub) { res.status(401).json({ error: 'Invalid Google token' }); return; }
 
@@ -92,7 +93,7 @@ router.post('/signup/', async (req: AuthRequest, res: Response) => {
     const { idToken, first_name, date_of_birth, sex, looking_for, hobbies, bio, location, latitude, longitude } = req.body;
     if (!idToken) { res.status(400).json({ error: 'idToken required' }); return; }
 
-    const ticket = await googleClient.verifyIdToken({ idToken, audience: [GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID] });
+    const ticket = await googleClient.verifyIdToken({ idToken, audience: [GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID, GOOGLE_WEB_CLIENT_ID] });
     const payload = ticket.getPayload();
     if (!payload || !payload.sub) { res.status(401).json({ error: 'Invalid Google token' }); return; }
 
