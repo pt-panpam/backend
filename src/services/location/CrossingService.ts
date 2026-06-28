@@ -3,6 +3,7 @@ import { RedisService } from './RedisService';
 import { RouteService } from './RouteService';
 import { CrossEvent } from '../../models/CrossEvent';
 import { CrossSettings } from '../../models/CrossSettings';
+import { Recap } from '../../models/Recap';
 import { User } from '../../models/User';
 import { Friend } from '../../models/Friend';
 import { createAndDeliverNotification } from '../NotificationService';
@@ -270,17 +271,7 @@ export class CrossingService {
               this.io.to(`user:${userId}`).emit('cross:detected', eventData);
               this.io.to(`user:${otherId}`).emit('cross:detected', eventData);
 
-              if (!isFriend) {
-                try {
-                  await createAndDeliverNotification({
-                    userId: otherId,
-                    type: 'cross_event',
-                    title: 'Cross Paths',
-                    body: `${(await User.findByPk(userId))?.firstName || 'Someone'} crossed your path nearby!`,
-                    actorId: userId,
-                  });
-                } catch {}
-              }
+
             }
 
             for (const cb of this.onCrossingCallbacks) {
@@ -303,68 +294,118 @@ export class CrossingService {
     return result;
   }
 
-  async getRecentCrosses(
-    userId: number,
-    limit: number = 50
-  ): Promise<any[]> {
+  private async enrichCrossEvent(userId: number, e: CrossEvent): Promise<any> {
     const settings = await this.getUserSettings(userId);
     const revealWindows = this.getRevealWindows(settings);
+    const otherId = e.user1Id === userId ? e.user2Id : e.user1Id;
+    const other = await User.findByPk(otherId, {
+      attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture', 'location'],
+    });
+    const isFriend = !!(await Friend.findOne({
+      where: {
+        [Op.or]: [
+          { userId, friendId: otherId },
+          { userId: otherId, friendId: userId },
+        ],
+      },
+    }));
+    const isUnlocked = await this.isCrossUnlocked(userId, e.crossedAt);
+    return {
+      id: e.id,
+      other_user: other
+        ? {
+            id: other.id,
+            username: other.username,
+            first_name: other.firstName,
+            last_name: other.lastName,
+            profile_picture: other.profilePicture,
+            location: other.location,
+          }
+        : null,
+      latitude: e.latitude,
+      longitude: e.longitude,
+      crossed_at: e.crossedAt,
+      published: e.published,
+      is_friend: isFriend,
+      is_unlocked: isUnlocked,
+      next_reveal_at: revealWindows.next.toISOString(),
+    };
+  }
 
+  async getRecentCrosses(
+    userId: number,
+    limit: number = 50,
+    hoursBack: number = 24
+  ): Promise<any[]> {
     const events = await CrossEvent.findAll({
       where: {
         [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
-        crossedAt: { [Op.gte]: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+        crossedAt: { [Op.gte]: new Date(Date.now() - hoursBack * 60 * 60 * 1000) },
       },
       order: [['crossed_at', 'DESC']],
       limit,
     });
+    return Promise.all(events.map((e) => this.enrichCrossEvent(userId, e)));
+  }
 
-    const userCache = new Map<number, any>();
-    const results = await Promise.all(
-      events.map(async (e) => {
-        const otherId = e.user1Id === userId ? e.user2Id : e.user1Id;
-        if (!userCache.has(otherId)) {
-          const u = await User.findByPk(otherId, {
-            attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture', 'location'],
-          });
-          userCache.set(otherId, u);
-        }
-        const other = userCache.get(otherId);
-        const isFriend = !!(await Friend.findOne({
-          where: {
-            [Op.or]: [
-              { userId, friendId: otherId },
-              { userId: otherId, friendId: userId },
-            ],
-          },
-        }));
+  async getEventsByDate(userId: number, dateStr: string): Promise<any[]> {
+    const start = new Date(dateStr + 'T00:00:00.000Z');
+    const end = new Date(dateStr + 'T23:59:59.999Z');
+    const events = await CrossEvent.findAll({
+      where: {
+        [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
+        crossedAt: { [Op.between]: [start, end] },
+      },
+      order: [['crossed_at', 'DESC']],
+    });
+    return Promise.all(events.map((e) => this.enrichCrossEvent(userId, e)));
+  }
 
-        const isUnlocked = await this.isCrossUnlocked(userId, e.crossedAt);
+  async generateAndStoreRecap(userId: number, date: string, period: 'am' | 'pm'): Promise<void> {
+    const dayStart = new Date(date + 'T00:00:00.000Z');
+    const dayEnd = new Date(date + 'T23:59:59.999Z');
 
-        return {
-          id: e.id,
-          other_user: other
-            ? {
-                id: other.id,
-                username: other.username,
-                first_name: other.firstName,
-                last_name: other.lastName,
-                profile_picture: other.profilePicture,
-                location: other.location,
-              }
-            : null,
-          latitude: e.latitude,
-          longitude: e.longitude,
-          crossed_at: e.crossedAt,
-          published: e.published,
-          is_friend: isFriend,
-          is_unlocked: isUnlocked,
-          next_reveal_at: revealWindows.next.toISOString(),
-        };
-      })
-    );
+    const events = await CrossEvent.findAll({
+      where: {
+        [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
+        crossedAt: { [Op.between]: [dayStart, dayEnd] },
+      },
+    });
 
-    return results;
+    let total = events.length;
+    let unlocked = 0;
+    for (const e of events) {
+      if (await this.isCrossUnlocked(userId, e.crossedAt)) {
+        unlocked++;
+      }
+    }
+
+    await Recap.upsert({
+      userId,
+      date,
+      period,
+      total,
+      unlocked,
+    } as any);
+  }
+
+  async getRecapHistory(userId: number): Promise<{ date: string; total: number; unlocked: number }[]> {
+    const recaps = await Recap.findAll({
+      where: { userId },
+      order: [['date', 'DESC']],
+    });
+
+    const dayMap = new Map<string, { total: number; unlocked: number }>();
+    for (const r of recaps) {
+      if (!dayMap.has(r.date)) dayMap.set(r.date, { total: 0, unlocked: 0 });
+      const entry = dayMap.get(r.date)!;
+      entry.total += r.total;
+      entry.unlocked += r.unlocked;
+    }
+
+    return Array.from(dayMap.entries())
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([date, { total, unlocked }]) => ({ date, total, unlocked }));
   }
 
   async getUserRoute(userId: number): Promise<any[]> {

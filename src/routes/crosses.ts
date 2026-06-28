@@ -48,11 +48,24 @@ router.patch('/settings/', authenticate, async (req: AuthRequest, res: Response)
   });
 });
 
-// Get cross events (last 24h only)
+// Get cross events (optional ?date=YYYY-MM-DD for specific day, else last 24h)
 router.get('/events/', authenticate, async (req: AuthRequest, res: Response) => {
   const service = CrossingService.getInstance();
-  const events = await service.getRecentCrosses(req.user!.id);
+  const { date } = req.query;
+  if (date && typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const events = await service.getEventsByDate(req.user!.id, date);
+    res.json({ results: events });
+    return;
+  }
+  const events = await service.getRecentCrosses(req.user!.id, 50, 24);
   res.json({ results: events });
+});
+
+// Get recap history (grouped by day, last 15 days)
+router.get('/recap-history/', authenticate, async (req: AuthRequest, res: Response) => {
+  const service = CrossingService.getInstance();
+  const recap = await service.getRecapHistory(req.user!.id);
+  res.json({ results: recap });
 });
 
 // Get route timeline (private, last 24h)

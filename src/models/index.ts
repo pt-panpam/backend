@@ -19,6 +19,7 @@ import { CrossSettings, initCrossSettings } from './CrossSettings';
 import { CrossEvent, initCrossEvent } from './CrossEvent';
 import { ProfileLike, initProfileLike } from './ProfileLike';
 import { Report, initReport } from './Report';
+import { Recap, initRecap } from './Recap';
 
 export function initModels(sequelize: Sequelize): void {
   initUser(sequelize);
@@ -41,6 +42,7 @@ export function initModels(sequelize: Sequelize): void {
   initCrossEvent(sequelize);
   initProfileLike(sequelize);
   initReport(sequelize);
+  initRecap(sequelize);
 
   // Associations
   User.hasMany(Post, { foreignKey: 'userId', as: 'posts' });
@@ -115,4 +117,5 @@ export {
   CrossEvent,
   ProfileLike,
   Report,
+  Recap,
 };

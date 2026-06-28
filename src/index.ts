@@ -11,6 +11,10 @@ import { setIO } from './io';
 import { RedisService } from './services/location/RedisService';
 import { RouteService } from './services/location/RouteService';
 import { CrossingService } from './services/location/CrossingService';
+import { CrossEvent } from './models/CrossEvent';
+import { Op } from 'sequelize';
+import { createAndDeliverNotification } from './services/NotificationService';
+import { User } from './models/User';
 
 import authRoutes from './routes/auth';
 import friendshipRoutes from './routes/friendship';
@@ -77,10 +81,134 @@ async function start() {
       } catch {}
     });
 
-    // Cleanup old routes every hour
+    // Cleanup old route points & cross events every hour (retention: 3 days)
     setInterval(() => {
       route.cleanupOldRoutes().catch(() => {});
+      CrossEvent.destroy({
+        where: { crossedAt: { [Op.lt]: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) } },
+      }).catch(() => {});
     }, 3600000);
+
+    // Add notified column if not exists (for migration)
+    sequelize.query(
+      `ALTER TABLE cross_events ADD COLUMN notified BOOLEAN DEFAULT 0;`
+    ).catch(() => {});
+
+    // 30-min delayed cross notification worker — check every 60s
+    setInterval(async () => {
+      try {
+        const cutoff = new Date(Date.now() - 30 * 60 * 1000);
+        const pending = await CrossEvent.findAll({
+          where: {
+            notified: false,
+            crossedAt: { [Op.lte]: cutoff },
+          },
+        });
+        for (const ev of pending) {
+          try {
+            const user1 = await User.findByPk(ev.user1Id, { attributes: ['id', 'firstName', 'profilePicture'] });
+            const user2 = await User.findByPk(ev.user2Id, { attributes: ['id', 'firstName', 'profilePicture'] });
+            const timeStr = ev.crossedAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+            // Notify user2 that user1 crossed them
+            if (user1) {
+              await createAndDeliverNotification({
+                userId: ev.user2Id,
+                type: 'cross_event',
+                title: 'Cross Paths',
+                body: `${user1.firstName || 'Someone'} crossed you at ${timeStr}`,
+                actorId: ev.user1Id,
+              });
+            }
+
+            // Notify user1 that user2 crossed them
+            if (user2) {
+              await createAndDeliverNotification({
+                userId: ev.user1Id,
+                type: 'cross_event',
+                title: 'Cross Paths',
+                body: `${user2.firstName || 'Someone'} crossed you at ${timeStr}`,
+                actorId: ev.user2Id,
+              });
+            }
+
+            ev.notified = true;
+            await ev.save();
+          } catch (err) {
+            console.error('Delayed notify error for event', ev.id, err);
+          }
+        }
+      } catch (err) {
+        console.error('Delayed notification worker error:', err);
+      }
+    }, 60000);
+
+    // Recap worker — snapshot recap at 9:00 and 21:00 daily
+    let lastRecapRun: string | null = null;
+    setInterval(async () => {
+      const now = new Date();
+      const h = now.getHours();
+      const m = now.getMinutes();
+      if (m !== 0 || (h !== 9 && h !== 21)) return;
+      const key = `${now.toISOString().split('T')[0]}-${h}`;
+      if (lastRecapRun === key) return;
+      lastRecapRun = key;
+
+      console.log(`🔄 Recap worker at ${now.toISOString()}`);
+
+      try {
+        const period: 'am' | 'pm' = h === 9 ? 'am' : 'pm';
+        const todayStr = now.toISOString().split('T')[0];
+        const crossService = CrossingService.getInstance();
+
+        const prevSlot = new Date(now);
+        if (h === 9) {
+          prevSlot.setHours(21, 0, 0, 0);
+          prevSlot.setDate(prevSlot.getDate() - 1);
+        } else {
+          prevSlot.setHours(9, 0, 0, 0);
+        }
+
+        const events = await CrossEvent.findAll({
+          where: { crossedAt: { [Op.between]: [prevSlot, now] } },
+        });
+
+        const userIds = new Set<number>();
+        for (const e of events) {
+          userIds.add(e.user1Id);
+          userIds.add(e.user2Id);
+        }
+
+        let notifiedCount = 0;
+        for (const userId of userIds) {
+          try {
+            await crossService.generateAndStoreRecap(userId, todayStr, period);
+          } catch {}
+
+          try {
+            await createAndDeliverNotification({
+              userId,
+              type: 'cross_recap',
+              title: 'New Crosses Revealed',
+              body: `Your daily recap for ${todayStr} is ready!`,
+              actorId: userId,
+            });
+            notifiedCount++;
+          } catch {}
+
+          io.to(`user:${userId}`).emit('cross:recap-ready', {
+            date: todayStr,
+            timestamp: now.toISOString(),
+          });
+        }
+
+        if (notifiedCount > 0) {
+          console.log(`✅ Recap worker stored recaps and notified ${notifiedCount} users`);
+        }
+      } catch (err) {
+        console.error('❌ Recap worker error:', err);
+      }
+    }, 60000);
 
     server.listen(env.PORT, '0.0.0.0', () => {
       console.log(`🚀 Node.js backend running on http://0.0.0.0:${env.PORT}`);

@@ -8,7 +8,7 @@ import { Message } from './models/Message';
 import { Post } from './models/Post';
 import { ConversationReadStatus } from './models/ConversationReadStatus';
 import { Friend } from './models/Friend';
-import { sendExpoPush } from './services/NotificationService';
+import { sendExpoPush, createAndDeliverNotification } from './services/NotificationService';
 
 interface AuthenticatedSocket extends Socket {
   userId?: number;
@@ -146,18 +146,19 @@ export function setupSocket(server: HTTPServer): Server {
           io.to(`user:${data.receiverId}`).emit('message:new', messageData);
           io.to(`user:${data.receiverId}`).emit('conversation:updated', { conversationId: convId });
 
-          // Send push notification only (no DB notification record)
-          const recipient = await User.findByPk(data.receiverId, { attributes: ['id', 'firstName', 'lastName', 'expoPushToken', 'pushMessages'] });
+          // Create notification + push
           const sender = await User.findByPk(userId, { attributes: ['id', 'firstName', 'lastName'] });
-          if (recipient && recipient.expoPushToken && recipient.pushMessages && sender) {
+          if (sender && data.receiverId) {
             const body = data.text
               ? (data.text.length > 100 ? data.text.slice(0, 100) + '...' : data.text)
               : (data.image ? 'Sent a photo' : 'Sent a message');
-            await sendExpoPush(recipient.expoPushToken, `${sender.firstName} ${sender.lastName}`, body, {
+            await createAndDeliverNotification({
+              userId: data.receiverId,
               type: 'new_message',
-              conversationId: convId,
+              title: `${sender.firstName} ${sender.lastName}`,
+              body,
               actorId: userId,
-            });
+            }).catch(() => {});
           }
         }
 

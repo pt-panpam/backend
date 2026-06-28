@@ -89,9 +89,9 @@ export class RouteService {
       ON route_points (hex_id, recorded_at DESC);
     `);
 
-    // Auto-drop retention policy (TimescaleDB)
+    // Auto-drop retention policy (TimescaleDB) — 3 days
     try {
-      await client.query(`SELECT add_retention_policy('route_points', INTERVAL '24 hours', if_not_exists => TRUE);`);
+      await client.query(`SELECT add_retention_policy('route_points', INTERVAL '3 days', if_not_exists => TRUE);`);
     } catch { /* not TimescaleDB, skip */ }
 
     // Crossing routes table
@@ -122,9 +122,9 @@ export class RouteService {
       await client.query(`SELECT add_retention_policy('crossing_routes', INTERVAL '30 days', if_not_exists => TRUE);`);
     } catch { /* skip */ }
 
-    // Cleanup old route_points (non-TimescaleDB fallback)
+    // Cleanup old route_points (non-TimescaleDB fallback) — 3 days
     try {
-      await client.query(`DELETE FROM route_points WHERE recorded_at < NOW() - INTERVAL '24 hours';`);
+      await client.query(`DELETE FROM route_points WHERE recorded_at < NOW() - INTERVAL '3 days';`);
     } catch { /* skip */ }
   }
 
@@ -160,7 +160,7 @@ export class RouteService {
     }
   }
 
-  async getUserRoute(userId: number, since: Date = new Date(Date.now() - 24 * 60 * 60 * 1000)): Promise<RoutePoint[]> {
+  async getUserRoute(userId: number, since: Date = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)): Promise<RoutePoint[]> {
     if (!this.isAvailable()) return [];
     try {
       const result: QueryResult = await this.pool!.query(
@@ -222,10 +222,10 @@ export class RouteService {
     this.status = 'disconnected';
   }
 
-  async cleanupOldRoutes(): Promise<void> {
+  async cleanupOldRoutes(days: number = 3): Promise<void> {
     if (!this.isAvailable()) return;
     try {
-      await this.pool!.query(`DELETE FROM route_points WHERE recorded_at < NOW() - INTERVAL '24 hours'`);
+      await this.pool!.query(`DELETE FROM route_points WHERE recorded_at < NOW() - INTERVAL '${days} days'`);
     } catch (err) {
       console.error('RouteService cleanupOldRoutes error:', err);
     }

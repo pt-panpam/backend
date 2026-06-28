@@ -14,16 +14,24 @@ router.get('/crosses/', authenticate, async (req: AuthRequest, res: Response) =>
   res.json({ results: events });
 });
 
-// Get user's route history (last 24h, private)
+// Get user's route history (optional ?days=N, default 15)
 router.get('/route/', authenticate, async (req: AuthRequest, res: Response) => {
   const routeService = RouteService.getInstance();
   if (!routeService.isAvailable()) {
     res.json({ results: [], message: 'Route storage unavailable.' });
     return;
   }
-  const crossingService = CrossingService.getInstance();
-  const route = await crossingService.getUserRoute(req.user!.id);
-  res.json({ results: route });
+  const days = Math.min(parseInt(req.query.days as string) || 3, 3);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const points = await routeService.getUserRoute(req.user!.id, since);
+  res.json({
+    results: points.map(p => ({
+      latitude: p.latitude,
+      longitude: p.longitude,
+      hex_id: p.hexId,
+      recorded_at: p.recordedAt,
+    })),
+  });
 });
 
 // Get hex boundary (for map overlay)
@@ -75,6 +83,23 @@ router.get('/stats/', authenticate, async (req: AuthRequest, res: Response) => {
   const crossingService = CrossingService.getInstance();
   const stats = await crossingService.getDashboardStats(req.user!.id);
   res.json(stats);
+});
+
+// Update user location (triggers cross detection)
+router.post('/update/', authenticate, async (req: AuthRequest, res: Response) => {
+  const { latitude, longitude } = req.body;
+  if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+    res.status(400).json({ error: 'latitude and longitude (numbers) required' });
+    return;
+  }
+  try {
+    const crossingService = CrossingService.getInstance();
+    const result = await crossingService.updateLocation(req.user!.id, latitude, longitude);
+    res.json(result);
+  } catch (err: any) {
+    console.error('Location update error:', err);
+    res.status(500).json({ error: 'Failed to update location' });
+  }
 });
 
 export default router;

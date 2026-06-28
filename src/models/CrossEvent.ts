@@ -8,6 +8,7 @@ export class CrossEvent extends Model {
   declare longitude: number;
   declare crossedAt: Date;
   declare published: boolean;
+  declare notified: boolean;
   declare created_at: Date;
   declare updated_at: Date;
 }
@@ -21,5 +22,6 @@ export function initCrossEvent(sequelize: Sequelize): void {
     longitude: { type: DataTypes.FLOAT, allowNull: false },
     crossedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW, field: 'crossed_at' },
     published: { type: DataTypes.BOOLEAN, defaultValue: false },
+    notified: { type: DataTypes.BOOLEAN, defaultValue: false },
   }, { sequelize, tableName: 'cross_events', timestamps: true, underscored: true });
 }
