@@ -12,10 +12,12 @@ async function seed() {
   const hobbyData = [
     'Photography', 'Travel', 'Music', 'Cooking', 'Fitness',
     'Reading', 'Gaming', 'Art', 'Dancing', 'Swimming',
-    'Hiking', 'Yoga', 'Cycling', 'Movies', 'Fashion',
+    'Hiking', 'Yoga', 'Cycling', 'Movies', 'Fashion', 'Coding', 'Design', 'Chess',
   ];
   const hobbies = await Hobby.bulkCreate(hobbyData.map(name => ({ name } as any)));
   console.log(`Created ${hobbies.length} hobbies`);
+
+  const ONBOARDING_USER_COUNT = 10;
 
   // Create users with FULL onboarding data
   const usersData = [
@@ -109,6 +111,52 @@ async function seed() {
       hobbies: ['Reading', 'Travel', 'Cooking', 'Fitness', 'Movies'],
       onboardingComplete: true,
     },
+    // Additional onboarding-only accounts (basic data only)
+    {
+      email: 'maya@test.com', username: 'maya', firstName: 'Maya', lastName: 'Rodriguez',
+      bio: 'Music lover and artist 🎨',
+      location: 'Austin, USA', latitude: 30.2672, longitude: -97.7431,
+      profilePicture: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200&h=200&fit=crop',
+      sex: 'female', dateOfBirth: '1998-04-10', lookingFor: 'everyone',
+      hobbies: ['Music', 'Art', 'Reading'],
+      onboardingComplete: true,
+    },
+    {
+      email: 'dev@test.com', username: 'dev', firstName: 'Dev', lastName: 'Kumar',
+      bio: 'Gamer and movie buff 🎮',
+      location: 'London, UK', latitude: 51.5074, longitude: -0.1278,
+      profilePicture: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&h=200&fit=crop',
+      sex: 'male', dateOfBirth: '1995-09-21', lookingFor: 'female',
+      hobbies: ['Gaming', 'Music', 'Movies'],
+      onboardingComplete: true,
+    },
+    {
+      email: 'sarah@test.com', username: 'sarah', firstName: 'Sarah', lastName: 'Miller',
+      bio: 'Fashion and travel enthusiast ✈️',
+      location: 'Paris, France', latitude: 48.8566, longitude: 2.3522,
+      profilePicture: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop',
+      sex: 'female', dateOfBirth: '1997-02-14', lookingFor: 'male',
+      hobbies: ['Travel', 'Fashion', 'Cooking'],
+      onboardingComplete: true,
+    },
+    {
+      email: 'alex@test.com', username: 'alex', firstName: 'Alex', lastName: 'Chen',
+      bio: 'Fitness trainer and swimmer 💪',
+      location: 'Tokyo, Japan', latitude: 35.6762, longitude: 139.6503,
+      profilePicture: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&h=200&fit=crop',
+      sex: 'male', dateOfBirth: '1994-11-03', lookingFor: 'female',
+      hobbies: ['Fitness', 'Swimming', 'Cycling'],
+      onboardingComplete: true,
+    },
+    {
+      email: 'lila@test.com', username: 'lila', firstName: 'Lila', lastName: 'Gomez',
+      bio: 'Travel photographer 📸',
+      location: 'Sydney, Australia', latitude: -33.8688, longitude: 151.2093,
+      profilePicture: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=200&h=200&fit=crop',
+      sex: 'female', dateOfBirth: '1999-06-30', lookingFor: 'everyone',
+      hobbies: ['Photography', 'Travel', 'Yoga'],
+      onboardingComplete: true,
+    },
   ];
 
   const password = await hashPassword('testpass123');
@@ -141,7 +189,7 @@ async function seed() {
   console.log('Created cross settings for all users');
 
   // Make all users friends (complete graph)
-  for (let i = 0; i < users.length; i++) {
+  for (let i = 0; i < ONBOARDING_USER_COUNT; i++) {
     for (let j = i + 1; j < users.length; j++) {
       await Friend.bulkCreate([
         { userId: users[i].id, friendId: users[j].id },
@@ -152,7 +200,7 @@ async function seed() {
   console.log('Created friendships (complete graph)');
 
   // Create FriendRequest records for accepted friendships
-  for (let i = 0; i < users.length; i++) {
+  for (let i = 0; i < ONBOARDING_USER_COUNT; i++) {
     for (let j = i + 1; j < users.length; j++) {
       await FriendRequest.create({ fromUserId: users[i].id, toUserId: users[j].id, status: 'accepted' } as any);
     }
@@ -162,7 +210,6 @@ async function seed() {
   // Create ProfileGallery photos for each user (featured on profiles)
   const galleryPhotoSets: Record<number, string[]> = {};
   const galleryPool = [
-    'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=400&h=500&fit=crop',
     'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe49?w=400&h=500&fit=crop',
     'https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=400&h=500&fit=crop',
     'https://images.unsplash.com/photo-1505144808419-1957a94ca61e?w=400&h=500&fit=crop',
@@ -179,7 +226,8 @@ async function seed() {
     'https://images.unsplash.com/photo-1501785888041-af3ef285b470?w=400&h=500&fit=crop',
     'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=400&h=500&fit=crop',
   ];
-  for (let i = 0; i < users.length; i++) {
+
+  for (let i = 0; i < ONBOARDING_USER_COUNT; i++) {
     const userGallery: string[] = [];
     const numPhotos = 3 + Math.floor(Math.random() * 3); // 3-5 photos per user
     for (let g = 0; g < numPhotos; g++) {
@@ -349,7 +397,7 @@ async function seed() {
   console.log('Created conversations');
 
   // Add notifications including cross_recap
-  for (let i = 0; i < users.length; i++) {
+  for (let i = 0; i < ONBOARDING_USER_COUNT; i++) {
     for (let j = 0; j < 3; j++) {
       const fromUser = users[(i + j + 1) % users.length];
       const post = posts[(i + j) % posts.length];
