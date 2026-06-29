@@ -148,6 +148,27 @@ export class RouteService {
     }
   }
 
+  async insertRoutePointsBatch(points: RoutePoint[]): Promise<void> {
+    if (!this.isAvailable() || points.length === 0) return;
+    try {
+      // Build a batch insert with VALUES (...), (...), ...
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let idx = 1;
+      for (const p of points) {
+        placeholders.push(`($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4})`);
+        values.push(p.userId, p.latitude, p.longitude, p.hexId, p.recordedAt);
+        idx += 5;
+      }
+      await this.pool!.query(
+        `INSERT INTO route_points (user_id, latitude, longitude, hex_id, recorded_at) VALUES ${placeholders.join(', ')}`,
+        values
+      );
+    } catch (err) {
+      console.error('RouteService insertRoutePointsBatch error:', err);
+    }
+  }
+
   async insertCrossingRoute(crossing: CrossingRoute): Promise<void> {
     if (!this.isAvailable()) return;
     try {

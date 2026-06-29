@@ -133,6 +133,42 @@ export class CrossingService {
     return `${h12}:${String(mins).padStart(2, '0')} ${ampm}`;
   }
 
+  /**
+   * Batch insert multiple route points at once. Also updates Redis with the
+   * latest point's hex and runs cross-detection for the most recent location.
+   */
+  async updateLocationBatch(
+    userId: number,
+    points: { latitude: number; longitude: number; recorded_at: string }[]
+  ): Promise<{ inserted: number }> {
+    const route = RouteService.getInstance();
+    if (!route.isAvailable()) return { inserted: 0 };
+
+    const routePoints = points.map(p => ({
+      userId,
+      latitude: p.latitude,
+      longitude: p.longitude,
+      hexId: H3Service.latLngToHex(p.latitude, p.longitude),
+      recordedAt: new Date(p.recorded_at),
+    }));
+
+    await route.insertRoutePointsBatch(routePoints).catch(() => {});
+
+    // Also update Redis with the latest point for presence/cross detection
+    if (points.length > 0) {
+      const latest = points[points.length - 1];
+      const redis = RedisService.getInstance();
+      if (redis.isAvailable()) {
+        const hexId = H3Service.latLngToHex(latest.latitude, latest.longitude);
+        await redis.setUserLocation(userId, hexId);
+      }
+      // Cross-check the latest point for nearby users
+      await this.updateLocation(userId, latest.latitude, latest.longitude);
+    }
+
+    return { inserted: points.length };
+  }
+
   async updateLocation(
     userId: number,
     latitude: number,
@@ -211,24 +247,30 @@ export class CrossingService {
             },
           });
 
-          const recentCross = await CrossEvent.findOne({
-            where: {
-              user1Id: Math.min(userId, otherId),
-              user2Id: Math.max(userId, otherId),
-              crossedAt: { [Op.gte]: new Date(Date.now() - 60 * 60 * 1000) },
-            },
-          });
-          if (recentCross) continue;
+          // Use findOrCreate with a 24-hour time bucket to atomically prevent
+          // duplicate cross events when both users trigger detection simultaneously.
+          // Crosses between the same two users should only be recorded once per day.
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const bucketStart = today;
 
           try {
-            const event = await CrossEvent.create({
-              user1Id: Math.min(userId, otherId),
-              user2Id: Math.max(userId, otherId),
-              latitude,
-              longitude,
-              crossedAt: new Date(),
-              published: false,
-            } as any);
+            const [event, created] = await CrossEvent.findOrCreate({
+              where: {
+                user1Id: Math.min(userId, otherId),
+                user2Id: Math.max(userId, otherId),
+                crossedAt: { [Op.gte]: bucketStart },
+              },
+              defaults: {
+                user1Id: Math.min(userId, otherId),
+                user2Id: Math.max(userId, otherId),
+                latitude,
+                longitude,
+                crossedAt: new Date(),
+                published: false,
+              } as any,
+            });
+            if (!created) continue;
 
             result.crossedWith.push(otherId);
             result.crossingDetected = true;
@@ -270,7 +312,6 @@ export class CrossingService {
 
               this.io.to(`user:${userId}`).emit('cross:detected', eventData);
               this.io.to(`user:${otherId}`).emit('cross:detected', eventData);
-
 
             }
 

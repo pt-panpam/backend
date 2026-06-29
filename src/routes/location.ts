@@ -102,4 +102,28 @@ router.post('/update/', authenticate, async (req: AuthRequest, res: Response) =>
   }
 });
 
+// Batch update user locations (receives array of points, all inserted at once)
+router.post('/update/batch/', authenticate, async (req: AuthRequest, res: Response) => {
+  const { points } = req.body;
+  if (!Array.isArray(points) || points.length === 0) {
+    res.status(400).json({ error: 'points array required with at least one entry' });
+    return;
+  }
+  // Validate each point
+  for (const p of points) {
+    if (typeof p.latitude !== 'number' || typeof p.longitude !== 'number' || typeof p.recorded_at !== 'string') {
+      res.status(400).json({ error: 'Each point must have latitude (number), longitude (number), and recorded_at (string)' });
+      return;
+    }
+  }
+  try {
+    const crossingService = CrossingService.getInstance();
+    const result = await crossingService.updateLocationBatch(req.user!.id, points);
+    res.json(result);
+  } catch (err: any) {
+    console.error('Batch location update error:', err);
+    res.status(500).json({ error: 'Failed to batch update location' });
+  }
+});
+
 export default router;
