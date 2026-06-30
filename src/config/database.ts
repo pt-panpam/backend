@@ -35,7 +35,24 @@ export async function initDatabase(): Promise<void> {
   await sequelize.authenticate();
   await sequelize.sync({ alter: false });
   // Manually add missing columns
-  if (!databaseUrl) {
+  if (databaseUrl) {
+    const migrations = [
+      'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "is_live" BOOLEAN DEFAULT false;',
+      'ALTER TABLE "cross_settings" ADD COLUMN IF NOT EXISTS "reveal_delay_minutes" INTEGER DEFAULT 60;',
+      'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "expo_push_token" VARCHAR(255) DEFAULT NULL;',
+      'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "push_crosses" BOOLEAN DEFAULT true;',
+      'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "looking_for" VARCHAR(30) DEFAULT \'\';',
+      'ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "is_request" BOOLEAN DEFAULT false;',
+      'ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "disappearing_minutes" INTEGER DEFAULT 0;',
+      'ALTER TABLE "post_photos" ADD COLUMN IF NOT EXISTS "type" VARCHAR(10) DEFAULT \'photo\';',
+      'ALTER TABLE "messages" ADD COLUMN IF NOT EXISTS "audio" VARCHAR(500) DEFAULT NULL;',
+      'ALTER TABLE "cross_settings" ADD COLUMN IF NOT EXISTS "reveal_schedule_hour_1" INTEGER DEFAULT 10;',
+      'ALTER TABLE "cross_settings" ADD COLUMN IF NOT EXISTS "reveal_schedule_hour_2" INTEGER DEFAULT 22;',
+    ];
+    for (const sql of migrations) {
+      try { await sequelize.query(sql); } catch (e: any) { console.warn('PG migration skipped:', e.message); }
+    }
+  } else {
     const migrations = [
       'ALTER TABLE `users` ADD COLUMN `is_live` TINYINT(1) DEFAULT 0;',
       'ALTER TABLE `cross_settings` ADD COLUMN `reveal_delay_minutes` INTEGER DEFAULT 60;',

@@ -185,7 +185,7 @@ router.post('/refresh/', async (req: AuthRequest, res: Response) => {
 // Get current user
 router.get('/user/', authenticate, async (req: AuthRequest, res: Response) => {
   const user = req.user!;
-  const data = serializeUser(user, user.id);
+  const data = await serializeUser(user, user.id);
   res.json(data);
 });
 
@@ -200,7 +200,7 @@ router.patch('/user/', authenticate, async (req: AuthRequest, res: Response) => 
     }
   }
   await user.save();
-  res.json(serializeUser(user, user.id));
+  res.json(await serializeUser(user, user.id));
 });
 
 // Change password
@@ -273,7 +273,7 @@ router.get('/users/:id/', authenticate, async (req: AuthRequest, res: Response) 
     res.status(404).json({ error: 'User not found' });
     return;
   }
-  const data = serializeUser(user, req.user!.id);
+  const data = await serializeUser(user, req.user!.id);
   res.json(data);
 });
 
@@ -319,7 +319,7 @@ router.patch('/user/profile/', authenticate, async (req: AuthRequest, res: Respo
   if (req.body.latitude !== undefined) user.latitude = req.body.latitude;
   if (req.body.longitude !== undefined) user.longitude = req.body.longitude;
   await user.save();
-  res.json(serializeUser(user, user.id));
+  res.json(await serializeUser(user, user.id));
 });
 
 // Account settings
@@ -400,7 +400,7 @@ router.post('/user/avatar/', authenticate, upload.single('profile_picture'), asy
     user.profilePicture = req.body.profile_picture;
   }
   await user.save();
-  res.json(serializeUser(user, user.id));
+  res.json(await serializeUser(user, user.id));
 });
 
 // Gallery — list (paginated)

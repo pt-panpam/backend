@@ -430,23 +430,108 @@ export class CrossingService {
     } as any);
   }
 
-  async getRecapHistory(userId: number): Promise<{ date: string; total: number; unlocked: number }[]> {
+  async getRecapHistory(userId: number): Promise<{
+    date: string;
+    total: number;
+    unlocked: number;
+    friend_total: number;
+    friend_unlocked: number;
+    unknown_total: number;
+    unknown_unlocked: number;
+  }[]> {
     const recaps = await Recap.findAll({
       where: { userId },
       order: [['date', 'DESC']],
     });
 
-    const dayMap = new Map<string, { total: number; unlocked: number }>();
+    if (recaps.length === 0) return [];
+
+    const dates = [...new Set(recaps.map(r => r.date))].sort();
+    const minDate = dates[0];
+    const maxDate = dates[dates.length - 1];
+
+    // Fetch all cross events for the date range
+    const allEvents = await CrossEvent.findAll({
+      where: {
+        [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
+        crossedAt: {
+          [Op.between]: [
+            new Date(minDate + 'T00:00:00.000Z'),
+            new Date(maxDate + 'T23:59:59.999Z'),
+          ],
+        },
+      },
+    });
+
+    // Collect unique other users
+    const otherUserIds = new Set<number>();
+    for (const e of allEvents) {
+      otherUserIds.add(e.user1Id === userId ? e.user2Id : e.user1Id);
+    }
+
+    // Batch check friendship status
+    const friendStatus = new Map<number, boolean>();
+    if (otherUserIds.size > 0) {
+      const friends = await Friend.findAll({
+        where: {
+          [Op.or]: [
+            { userId, friendId: { [Op.in]: Array.from(otherUserIds) } },
+            { userId: { [Op.in]: Array.from(otherUserIds) }, friendId: userId },
+          ],
+        },
+      });
+      for (const f of friends) {
+        const otherId = f.userId === userId ? f.friendId : f.userId;
+        friendStatus.set(otherId, true);
+      }
+      for (const id of otherUserIds) {
+        if (!friendStatus.has(id)) friendStatus.set(id, false);
+      }
+    }
+
+    // Cache unlock threshold
+    const settings = await this.getUserSettings(userId);
+    const previousSlot = getPreviousRevealSlot(settings);
+
+    // Build day map from recaps
+    const dayMap = new Map<string, {
+      total: number; unlocked: number;
+      friend_total: number; friend_unlocked: number;
+      unknown_total: number; unknown_unlocked: number;
+    }>();
     for (const r of recaps) {
-      if (!dayMap.has(r.date)) dayMap.set(r.date, { total: 0, unlocked: 0 });
+      if (!dayMap.has(r.date)) {
+        dayMap.set(r.date, {
+          total: 0, unlocked: 0,
+          friend_total: 0, friend_unlocked: 0,
+          unknown_total: 0, unknown_unlocked: 0,
+        });
+      }
       const entry = dayMap.get(r.date)!;
       entry.total += r.total;
       entry.unlocked += r.unlocked;
     }
 
+    // Aggregate events by date with friend/unknown breakdown
+    for (const e of allEvents) {
+      const dateStr = e.crossedAt.toISOString().split('T')[0];
+      if (!dayMap.has(dateStr)) continue;
+      const otherId = e.user1Id === userId ? e.user2Id : e.user1Id;
+      const isFriend = friendStatus.get(otherId) ?? false;
+      const isUnlocked = new Date(e.crossedAt) <= previousSlot;
+      const entry = dayMap.get(dateStr)!;
+      if (isFriend) {
+        entry.friend_total++;
+        if (isUnlocked) entry.friend_unlocked++;
+      } else {
+        entry.unknown_total++;
+        if (isUnlocked) entry.unknown_unlocked++;
+      }
+    }
+
     return Array.from(dayMap.entries())
       .sort(([a], [b]) => b.localeCompare(a))
-      .map(([date, { total, unlocked }]) => ({ date, total, unlocked }));
+      .map(([date, counts]) => ({ date, ...counts }));
   }
 
   async getUserRoute(userId: number): Promise<any[]> {

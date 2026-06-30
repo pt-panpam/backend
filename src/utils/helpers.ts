@@ -1,7 +1,11 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { Op } from 'sequelize';
 import { env } from '../config/env';
 import { User } from '../models/User';
+import { CrossEvent } from '../models/CrossEvent';
+import { Friend } from '../models/Friend';
+import { FriendRequest } from '../models/FriendRequest';
 
 export function generateTokens(user: User): { access: string; refresh: string } {
   const payload = { userId: user.id, email: user.email };
@@ -18,7 +22,13 @@ export async function comparePassword(password: string, hash: string): Promise<b
   return bcrypt.compare(password, hash);
 }
 
-export function serializeUser(user: User, currentUserId?: number) {
+export async function serializeUser(user: User, currentUserId?: number) {
+  const [total_crosses, friend_count, is_friend, friend_request_status] = await Promise.all([
+    CrossEvent.count({ where: { [Op.or]: [{ user1Id: user.id }, { user2Id: user.id }], published: true } }),
+    Friend.count({ where: { [Op.or]: [{ userId: user.id }, { friendId: user.id }] } }),
+    currentUserId ? Friend.findOne({ where: { [Op.or]: [{ userId: currentUserId, friendId: user.id }, { userId: user.id, friendId: currentUserId }] } }).then(Boolean) : Promise.resolve(false),
+    currentUserId ? FriendRequest.findOne({ where: { [Op.or]: [{ fromUserId: currentUserId, toUserId: user.id }, { fromUserId: user.id, toUserId: currentUserId }], status: 'pending' } }).then((fr) => fr ? (fr.fromUserId === currentUserId ? 'sent' : 'received') : null) : Promise.resolve(null),
+  ]);
   return {
     id: user.id,
     username: user.username,
@@ -41,10 +51,10 @@ export function serializeUser(user: User, currentUserId?: number) {
     read_receipts: user.readReceipts,
     last_seen: user.lastSeen,
     created_at: user.created_at,
-    total_crosses: 0,
-    friend_count: 0,
-    is_friend: false,
-    friend_request_status: null,
+    total_crosses,
+    friend_count,
+    is_friend,
+    friend_request_status,
     phone_number: user.phoneNumber,
     who_can_message: user.whoCanMessage,
     who_can_see_posts: user.whoCanSeePosts,
@@ -56,7 +66,13 @@ export function serializeUser(user: User, currentUserId?: number) {
   };
 }
 
-export function serializeUserProfile(user: User) {
+export async function serializeUserProfile(user: User, currentUserId?: number) {
+  const [total_crosses, friend_count, is_friend, friend_request_status] = await Promise.all([
+    CrossEvent.count({ where: { [Op.or]: [{ user1Id: user.id }, { user2Id: user.id }], published: true } }),
+    Friend.count({ where: { [Op.or]: [{ userId: user.id }, { friendId: user.id }] } }),
+    currentUserId ? Friend.findOne({ where: { [Op.or]: [{ userId: currentUserId, friendId: user.id }, { userId: user.id, friendId: currentUserId }] } }).then(Boolean) : Promise.resolve(false),
+    currentUserId ? FriendRequest.findOne({ where: { [Op.or]: [{ fromUserId: currentUserId, toUserId: user.id }, { fromUserId: user.id, toUserId: currentUserId }], status: 'pending' } }).then((fr) => fr ? (fr.fromUserId === currentUserId ? 'sent' : 'received') : null) : Promise.resolve(null),
+  ]);
   return {
     id: user.id,
     username: user.username,
@@ -68,10 +84,10 @@ export function serializeUserProfile(user: User) {
     bio: user.bio,
     location: user.location,
     hobbies: user.hobbies,
-    total_crosses: 0,
-    friend_count: 0,
-    is_friend: false,
-    friend_request_status: null,
+    total_crosses,
+    friend_count,
+    is_friend,
+    friend_request_status,
     last_seen: user.lastSeen,
   };
 }
