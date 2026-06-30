@@ -2,14 +2,18 @@ import { Sequelize } from 'sequelize';
 import path from 'path';
 import { env } from './env';
 
+// 1. Pull the URL from Render's native environment variables
 const databaseUrl = process.env.DATABASE_URL;
+
+// 2. Render Internal URLs DO NOT support SSL. External URLs (containing .render.com) DO require SSL.
+const requiresSsl = databaseUrl && databaseUrl.includes('.render.com');
 
 export const sequelize = databaseUrl
   ? new Sequelize(databaseUrl, {
       dialect: 'postgres',
-      dialectOptions: {
+      dialectOptions: requiresSsl ? {
         ssl: { require: true, rejectUnauthorized: false },
-      },
+      } : {}, // Empty object prevents SSL crashes on Render Internal Network
       logging: false,
       define: {
         underscored: true,
@@ -34,6 +38,7 @@ export const sequelize = databaseUrl
 export async function initDatabase(): Promise<void> {
   await sequelize.authenticate();
   await sequelize.sync({ alter: false });
+  
   // Manually add missing columns
   if (databaseUrl) {
     const migrations = [
@@ -50,7 +55,11 @@ export async function initDatabase(): Promise<void> {
       'ALTER TABLE "cross_settings" ADD COLUMN IF NOT EXISTS "reveal_schedule_hour_2" INTEGER DEFAULT 22;',
     ];
     for (const sql of migrations) {
-      try { await sequelize.query(sql); } catch (e: any) { console.warn('PG migration skipped:', e.message); }
+      try { 
+        await sequelize.query(sql); 
+      } catch (e: any) { 
+        console.warn('PG migration skipped:', e.message); 
+      }
     }
   } else {
     const migrations = [
@@ -67,7 +76,11 @@ export async function initDatabase(): Promise<void> {
       'ALTER TABLE `cross_settings` ADD COLUMN `reveal_schedule_hour_2` INTEGER DEFAULT 22;',
     ];
     for (const sql of migrations) {
-      try { await sequelize.query(sql); } catch { /* column already exists */ }
+      try { 
+        await sequelize.query(sql); 
+      } catch { 
+        /* column already exists */ 
+      }
     }
   }
   console.log(`Database connected (${databaseUrl ? 'PostgreSQL' : 'SQLite'})`);
