@@ -16,9 +16,10 @@ interface AuthenticatedSocket extends Socket {
 }
 
 export function setupSocket(server: HTTPServer): Server {
+  const corsOrigin = env.CORS_ORIGINS.includes('*') ? true : env.CORS_ORIGINS;
   const io = new Server(server, {
     cors: {
-      origin: env.CORS_ORIGINS,
+      origin: corsOrigin,
       credentials: true,
     },
   });
