@@ -144,25 +144,40 @@ export class CrossingService {
     const route = RouteService.getInstance();
     if (!route.isAvailable()) return { inserted: 0 };
 
-    const routePoints = points.map(p => ({
-      userId,
-      latitude: p.latitude,
-      longitude: p.longitude,
-      hexId: H3Service.latLngToHex(p.latitude, p.longitude),
-      recordedAt: new Date(p.recorded_at),
-    }));
+    const redis = RedisService.getInstance();
+
+    // — Full-resolution: store ALL raw points in Redis (24h TTL)
+    if (redis.isAvailable()) {
+      await redis.setRoutePoints(userId, points).catch(() => {});
+    }
+
+    // — Simplified: decimate to one point per 30-second window for PostgreSQL
+    const routePoints: { userId: number; latitude: number; longitude: number; hexId: string; recordedAt: Date }[] = [];
+    let lastWindowStart = 0;
+    for (const p of points) {
+      const ts = new Date(p.recorded_at).getTime();
+      const windowStart = Math.floor(ts / 30000) * 30000;
+      if (windowStart !== lastWindowStart) {
+        routePoints.push({
+          userId,
+          latitude: p.latitude,
+          longitude: p.longitude,
+          hexId: H3Service.latLngToHex(p.latitude, p.longitude),
+          recordedAt: new Date(p.recorded_at),
+        });
+        lastWindowStart = windowStart;
+      }
+    }
 
     await route.insertRoutePointsBatch(routePoints).catch(() => {});
 
-    // Also update Redis with the latest point for presence/cross detection
+    // Update Redis current hex + cross-check the latest point
     if (points.length > 0) {
       const latest = points[points.length - 1];
-      const redis = RedisService.getInstance();
       if (redis.isAvailable()) {
         const hexId = H3Service.latLngToHex(latest.latitude, latest.longitude);
         await redis.setUserLocation(userId, hexId);
       }
-      // Cross-check the latest point for nearby users
       await this.updateLocation(userId, latest.latitude, latest.longitude);
     }
 
@@ -186,7 +201,14 @@ export class CrossingService {
     const redis = RedisService.getInstance();
     const route = RouteService.getInstance();
 
-    // Store route point
+    // Store single point in Redis full-res + PG simplified
+    if (redis.isAvailable()) {
+      await redis.setRoutePoints(userId, [{
+        latitude,
+        longitude,
+        recorded_at: new Date().toISOString(),
+      }]).catch(() => {});
+    }
     if (route.isAvailable()) {
       await route.insertRoutePoint({
         userId,
@@ -555,7 +577,7 @@ export class CrossingService {
       CrossEvent.findAll({
         where: {
           [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
-          crossedAt: { [Op.gte]: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+          crossedAt: { [Op.gte]: new Date(Date.now() - 24 * 60 * 60 * 1000) }, // crosses from last 24h
         },
         order: [['crossed_at', 'ASC']],
       }),

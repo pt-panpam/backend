@@ -20,6 +20,15 @@ async function migrate() {
   await addColumn(q, 'post_photos', 'type', { type: 'STRING(10)', defaultValue: 'photo' });
   await addColumn(q, 'messages', 'audio', { type: 'STRING(500)', allowNull: true });
 
+  await addColumn(q, 'users', 'school', { type: 'STRING(255)', defaultValue: '' });
+  await addColumn(q, 'users', 'work', { type: 'STRING(255)', defaultValue: '' });
+  await addColumn(q, 'users', 'school_work_visibility', { type: 'STRING(20)', defaultValue: 'public' });
+  await addColumn(q, 'users', 'dob_visibility', { type: 'STRING(20)', defaultValue: 'public' });
+  await addColumn(q, 'users', 'sex_visibility', { type: 'STRING(20)', defaultValue: 'public' });
+  await addColumn(q, 'users', 'looking_for_visibility', { type: 'STRING(20)', defaultValue: 'public' });
+  await addColumn(q, 'users', 'hobbies_visibility', { type: 'STRING(20)', defaultValue: 'public' });
+  await addColumn(q, 'users', 'phone_visibility', { type: 'STRING(20)', defaultValue: 'friends' });
+
   await sequelize.close();
 }
 

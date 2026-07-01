@@ -13,6 +13,8 @@ export class User extends Model {
   declare sex: string;
   declare lookingFor: string;
   declare bio: string;
+  declare school: string;
+  declare work: string;
   declare location: string;
   declare latitude: number | null;
   declare longitude: number | null;
@@ -35,6 +37,12 @@ export class User extends Model {
   declare theme: string;
   declare language: string;
   declare dataSaver: boolean;
+  declare schoolWorkVisibility: string;
+  declare dobVisibility: string;
+  declare sexVisibility: string;
+  declare lookingForVisibility: string;
+  declare hobbiesVisibility: string;
+  declare phoneVisibility: string;
   declare isActive: boolean;
   declare isLive: boolean;
   declare lastSeen: Date;
@@ -66,6 +74,8 @@ export function initUser(sequelize: Sequelize): void {
     sex: { type: DataTypes.STRING(30), defaultValue: '' },
     lookingFor: { type: DataTypes.STRING(30), defaultValue: '', field: 'looking_for' },
     bio: { type: DataTypes.TEXT, defaultValue: '' },
+    school: { type: DataTypes.STRING(255), defaultValue: '' },
+    work: { type: DataTypes.STRING(255), defaultValue: '' },
     location: { type: DataTypes.STRING(255), defaultValue: '' },
     latitude: { type: DataTypes.FLOAT, allowNull: true },
     longitude: { type: DataTypes.FLOAT, allowNull: true },
@@ -88,6 +98,12 @@ export function initUser(sequelize: Sequelize): void {
     theme: { type: DataTypes.STRING(10), defaultValue: 'system' },
     language: { type: DataTypes.STRING(10), defaultValue: 'en' },
     dataSaver: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'data_saver' },
+    schoolWorkVisibility: { type: DataTypes.STRING(20), defaultValue: 'public', field: 'school_work_visibility' },
+    dobVisibility: { type: DataTypes.STRING(20), defaultValue: 'public', field: 'dob_visibility' },
+    sexVisibility: { type: DataTypes.STRING(20), defaultValue: 'public', field: 'sex_visibility' },
+    lookingForVisibility: { type: DataTypes.STRING(20), defaultValue: 'public', field: 'looking_for_visibility' },
+    hobbiesVisibility: { type: DataTypes.STRING(20), defaultValue: 'public', field: 'hobbies_visibility' },
+    phoneVisibility: { type: DataTypes.STRING(20), defaultValue: 'friends', field: 'phone_visibility' },
     isActive: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'is_active' },
     isLive: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'is_live' },
     lastSeen: { type: DataTypes.DATE, defaultValue: DataTypes.NOW, field: 'last_seen' },

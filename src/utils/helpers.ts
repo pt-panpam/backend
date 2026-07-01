@@ -40,6 +40,8 @@ export async function serializeUser(user: User, currentUserId?: number) {
     age: user.age,
     sex: user.sex,
     bio: user.bio,
+    school: user.school || null,
+    work: user.work || null,
     location: user.location,
     latitude: user.latitude,
     longitude: user.longitude,
@@ -63,6 +65,12 @@ export async function serializeUser(user: User, currentUserId?: number) {
     theme: user.theme,
     language: user.language,
     data_saver: user.dataSaver,
+    school_work_visibility: user.schoolWorkVisibility,
+    dob_visibility: user.dobVisibility,
+    sex_visibility: user.sexVisibility,
+    looking_for_visibility: user.lookingForVisibility,
+    hobbies_visibility: user.hobbiesVisibility,
+    phone_visibility: user.phoneVisibility,
   };
 }
 
@@ -82,6 +90,8 @@ export async function serializeUserProfile(user: User, currentUserId?: number) {
     age: user.age,
     sex: user.sex,
     bio: user.bio,
+    school: user.school || null,
+    work: user.work || null,
     location: user.location,
     hobbies: user.hobbies,
     total_crosses,

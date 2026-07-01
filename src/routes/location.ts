@@ -14,7 +14,7 @@ router.get('/crosses/', authenticate, async (req: AuthRequest, res: Response) =>
   res.json({ results: events });
 });
 
-// Get user's route history (optional ?days=N, default 15)
+// Get user's route history (optional ?days=N, default 3)
 router.get('/route/', authenticate, async (req: AuthRequest, res: Response) => {
   const routeService = RouteService.getInstance();
   if (!routeService.isAvailable()) {

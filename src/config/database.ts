@@ -53,6 +53,14 @@ export async function initDatabase(): Promise<void> {
       'ALTER TABLE "messages" ADD COLUMN IF NOT EXISTS "audio" VARCHAR(500) DEFAULT NULL;',
       'ALTER TABLE "cross_settings" ADD COLUMN IF NOT EXISTS "reveal_schedule_hour_1" INTEGER DEFAULT 10;',
       'ALTER TABLE "cross_settings" ADD COLUMN IF NOT EXISTS "reveal_schedule_hour_2" INTEGER DEFAULT 22;',
+      'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "school" VARCHAR(255) DEFAULT \'\';',
+      'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "work" VARCHAR(255) DEFAULT \'\';',
+      'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "school_work_visibility" VARCHAR(20) DEFAULT \'public\';',
+      'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "dob_visibility" VARCHAR(20) DEFAULT \'public\';',
+      'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "sex_visibility" VARCHAR(20) DEFAULT \'public\';',
+      'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "looking_for_visibility" VARCHAR(20) DEFAULT \'public\';',
+      'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "hobbies_visibility" VARCHAR(20) DEFAULT \'public\';',
+      'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "phone_visibility" VARCHAR(20) DEFAULT \'friends\';',
     ];
     for (const sql of migrations) {
       try { 
@@ -74,6 +82,14 @@ export async function initDatabase(): Promise<void> {
       'ALTER TABLE `messages` ADD COLUMN `audio` VARCHAR(500) DEFAULT NULL;',
       'ALTER TABLE `cross_settings` ADD COLUMN `reveal_schedule_hour_1` INTEGER DEFAULT 10;',
       'ALTER TABLE `cross_settings` ADD COLUMN `reveal_schedule_hour_2` INTEGER DEFAULT 22;',
+      'ALTER TABLE `users` ADD COLUMN `school` VARCHAR(255) DEFAULT \'\';',
+      'ALTER TABLE `users` ADD COLUMN `work` VARCHAR(255) DEFAULT \'\';',
+      'ALTER TABLE `users` ADD COLUMN `school_work_visibility` VARCHAR(20) DEFAULT \'public\';',
+      'ALTER TABLE `users` ADD COLUMN `dob_visibility` VARCHAR(20) DEFAULT \'public\';',
+      'ALTER TABLE `users` ADD COLUMN `sex_visibility` VARCHAR(20) DEFAULT \'public\';',
+      'ALTER TABLE `users` ADD COLUMN `looking_for_visibility` VARCHAR(20) DEFAULT \'public\';',
+      'ALTER TABLE `users` ADD COLUMN `hobbies_visibility` VARCHAR(20) DEFAULT \'public\';',
+      'ALTER TABLE `users` ADD COLUMN `phone_visibility` VARCHAR(20) DEFAULT \'friends\';',
     ];
     for (const sql of migrations) {
       try { 

@@ -205,6 +205,21 @@ async function start() {
         if (notifiedCount > 0) {
           console.log(`✅ Recap worker stored recaps and notified ${notifiedCount} users`);
         }
+
+        // At 9pm recap, emit route:reset so frontend clears local trail for a fresh start
+        // (PG data stays for 3-day history; only ephemeral Redis + frontend storage reset)
+        if (h === 21) {
+          try {
+            const redis = RedisService.getInstance();
+            for (const userId of userIds) {
+              await redis.clearRoutePoints(userId).catch(() => {});
+            }
+          } catch {}
+          for (const userId of userIds) {
+            io.to(`user:${userId}`).emit('route:reset', { timestamp: now.toISOString() });
+          }
+          console.log(`🗑️ Route trails reset for ${userIds.size} users after 9pm recap`);
+        }
       } catch (err) {
         console.error('❌ Recap worker error:', err);
       }

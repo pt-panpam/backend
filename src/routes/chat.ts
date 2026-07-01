@@ -173,9 +173,9 @@ router.get('/conversations/:id/', authenticate, async (req: AuthRequest, res: Re
 // Start a conversation / send message
 router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequest, res: Response) => {
   const receiver_id = Number(req.body.receiver_id);
-  const text = req.body.text;
-  const reply_to = req.body.reply_to;
-  const post_id = req.body.post_id;
+  const text = req.body.text || (req.query.text as string) || '';
+  const reply_to = req.body.reply_to || (req.query.reply_to as string);
+  const post_id = req.body.post_id || (req.query.post_id as string);
   if (!receiver_id) { res.status(400).json({ error: 'receiver_id required' }); return; }
 
   // Find existing conversation

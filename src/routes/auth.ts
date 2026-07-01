@@ -182,6 +182,14 @@ router.post('/refresh/', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// Check username availability
+router.get('/check-username/', async (req: AuthRequest, res: Response) => {
+  const username = (req.query.username as string || '').trim().toLowerCase();
+  if (!username) { res.json({ available: false }); return; }
+  const existing = await User.findOne({ where: { username } });
+  res.json({ available: !existing });
+});
+
 // Get current user
 router.get('/user/', authenticate, async (req: AuthRequest, res: Response) => {
   const user = req.user!;
@@ -192,7 +200,7 @@ router.get('/user/', authenticate, async (req: AuthRequest, res: Response) => {
 // Update current user
 router.patch('/user/', authenticate, async (req: AuthRequest, res: Response) => {
   const user = req.user!;
-  const allowed = ['first_name', 'last_name', 'username', 'bio', 'location', 'sex', 'phone_number', 'is_private', 'show_online_status', 'read_receipts', 'theme', 'language', 'data_saver', 'who_can_message', 'who_can_see_posts', 'story_visibility', 'friend_request_mode', 'onboarding_complete'];
+  const allowed = ['first_name', 'last_name', 'username', 'bio', 'location', 'sex', 'phone_number', 'is_private', 'show_online_status', 'read_receipts', 'theme', 'language', 'data_saver', 'who_can_message', 'who_can_see_posts', 'story_visibility', 'friend_request_mode', 'onboarding_complete', 'school', 'work', 'date_of_birth', 'looking_for', 'hobbies', 'school_work_visibility', 'dob_visibility', 'sex_visibility', 'looking_for_visibility', 'hobbies_visibility', 'phone_visibility'];
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
       const dbKey = key.replace(/_([a-z])/g, (_, l) => l.toUpperCase());
@@ -310,7 +318,10 @@ router.patch('/user/profile/', authenticate, async (req: AuthRequest, res: Respo
   const user = req.user!;
   if (req.body.first_name !== undefined) user.firstName = req.body.first_name;
   if (req.body.last_name !== undefined) user.lastName = req.body.last_name;
+  if (req.body.username !== undefined) user.username = req.body.username;
   if (req.body.bio !== undefined) user.bio = req.body.bio;
+  if (req.body.school !== undefined) user.school = req.body.school;
+  if (req.body.work !== undefined) user.work = req.body.work;
   if (req.body.location !== undefined) user.location = req.body.location;
   if (req.body.date_of_birth !== undefined) user.dateOfBirth = req.body.date_of_birth;
   if (req.body.sex !== undefined) user.sex = req.body.sex;
@@ -318,6 +329,12 @@ router.patch('/user/profile/', authenticate, async (req: AuthRequest, res: Respo
   if (req.body.hobbies !== undefined) user.hobbies = req.body.hobbies;
   if (req.body.latitude !== undefined) user.latitude = req.body.latitude;
   if (req.body.longitude !== undefined) user.longitude = req.body.longitude;
+  if (req.body.school_work_visibility !== undefined) user.schoolWorkVisibility = req.body.school_work_visibility;
+  if (req.body.dob_visibility !== undefined) user.dobVisibility = req.body.dob_visibility;
+  if (req.body.sex_visibility !== undefined) user.sexVisibility = req.body.sex_visibility;
+  if (req.body.looking_for_visibility !== undefined) user.lookingForVisibility = req.body.looking_for_visibility;
+  if (req.body.hobbies_visibility !== undefined) user.hobbiesVisibility = req.body.hobbies_visibility;
+  if (req.body.phone_visibility !== undefined) user.phoneVisibility = req.body.phone_visibility;
   await user.save();
   res.json(await serializeUser(user, user.id));
 });

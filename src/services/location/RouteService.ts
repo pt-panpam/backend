@@ -243,6 +243,9 @@ export class RouteService {
     this.status = 'disconnected';
   }
 
+  /**
+   * Delete route_points older than N days (default: 3).
+   */
   async cleanupOldRoutes(days: number = 3): Promise<void> {
     if (!this.isAvailable()) return;
     try {

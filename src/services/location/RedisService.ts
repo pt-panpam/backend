@@ -128,6 +128,54 @@ export class RedisService {
     }
   }
 
+  /**
+   * Store full-resolution route points in Redis with 24h TTL.
+   * Used for route storage optimization — full-res data lives here,
+   * only simplified/decimated points go to PostgreSQL.
+   */
+  async setRoutePoints(userId: number, points: { latitude: number; longitude: number; recorded_at: string }[]): Promise<void> {
+    if (!this.isAvailable() || points.length === 0) return;
+    try {
+      const key = `route_full:${userId}`;
+      const items = points.map(p => JSON.stringify(p));
+      if (items.length === 1) {
+        await this.client!.rpush(key, items[0]);
+      } else {
+        await this.client!.rpush(key, ...items);
+      }
+      await this.client!.expire(key, 86400);
+    } catch (err) {
+      console.error('Redis setRoutePoints error:', err);
+    }
+  }
+
+  /**
+   * Retrieve full-resolution route points for a user (up to limit).
+   */
+  async getRoutePoints(userId: number, limit: number = 10000): Promise<{ latitude: number; longitude: number; recorded_at: string }[]> {
+    if (!this.isAvailable()) return [];
+    try {
+      const key = `route_full:${userId}`;
+      const items = await this.client!.lrange(key, -limit, -1);
+      return items.map(item => JSON.parse(item));
+    } catch (err) {
+      console.error('Redis getRoutePoints error:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Clear full-resolution route points for a user from Redis.
+   */
+  async clearRoutePoints(userId: number): Promise<void> {
+    if (!this.isAvailable()) return;
+    try {
+      await this.client!.del(`route_full:${userId}`);
+    } catch (err) {
+      console.error('Redis clearRoutePoints error:', err);
+    }
+  }
+
   async publishCrossEvent(user1Id: number, user2Id: number, hexId: string, lat: number, lng: number): Promise<void> {
     if (!this.isAvailable()) return;
     try {
