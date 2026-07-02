@@ -13,7 +13,16 @@ import { CrossingService } from './services/location/CrossingService';
 import { CrossEvent } from './models/CrossEvent';
 import { Op } from 'sequelize';
 import { createAndDeliverNotification } from './services/NotificationService';
+import { StorageService } from './services/StorageService';
 import { User } from './models/User';
+import { Post } from './models/Post';
+import { PostPhoto } from './models/PostPhoto';
+import { PostLike } from './models/PostLike';
+import { SavedPost } from './models/SavedPost';
+import { Comment } from './models/Comment';
+import { Notification } from './models/Notification';
+import { Message } from './models/Message';
+import { Conversation } from './models/Conversation';
 
 import authRoutes from './routes/auth';
 import friendshipRoutes from './routes/friendship';
@@ -220,6 +229,67 @@ async function start() {
         console.error('❌ Recap worker error:', err);
       }
     }, 60000);
+
+    // Expired posts & chat media cleanup from R2 — every 10 minutes
+    setInterval(async () => {
+      try {
+        // 1. Expired posts — delete media from R2 then remove DB records
+        const expiredPosts = await Post.findAll({
+          where: { expiresAt: { [Op.lt]: new Date() } },
+        });
+        for (const post of expiredPosts) {
+          const photos = await PostPhoto.findAll({ where: { postId: post.id } });
+          for (const photo of photos) {
+            if (photo.image && photo.image.startsWith('https://pub-')) {
+              await StorageService.deleteFile(photo.image);
+            }
+          }
+          await Notification.destroy({ where: { postId: post.id } });
+          await PostLike.destroy({ where: { postId: post.id } });
+          await Comment.destroy({ where: { postId: post.id } });
+          await SavedPost.destroy({ where: { postId: post.id } });
+          await PostPhoto.destroy({ where: { postId: post.id } });
+          await post.destroy();
+        }
+
+        // 2. Disappearing chat media — delete from R2 then remove expired records
+        const conversations = await Conversation.findAll({
+          where: { disappearingMinutes: { [Op.gt]: 0 } },
+        });
+        for (const conv of conversations) {
+          const cutoff = new Date(Date.now() - conv.disappearingMinutes * 60 * 1000);
+          const expiredMessages = await Message.findAll({
+            where: {
+              conversationId: conv.id,
+              created_at: { [Op.lt]: cutoff },
+              [Op.or]: [
+                { image: { [Op.ne]: null } },
+                { audio: { [Op.ne]: null } },
+              ],
+            },
+          });
+          for (const msg of expiredMessages) {
+            if (msg.image && msg.image.startsWith('https://pub-')) {
+              await StorageService.deleteFile(msg.image);
+            }
+            if (msg.audio && msg.audio.startsWith('https://pub-')) {
+              await StorageService.deleteFile(msg.audio);
+            }
+          }
+          if (expiredMessages.length > 0) {
+            await Message.destroy({
+              where: { id: { [Op.in]: expiredMessages.map(m => m.id) } },
+            });
+          }
+        }
+
+        if (expiredPosts.length > 0) {
+          console.log(`🧹 Cleaned up ${expiredPosts.length} expired posts from R2 & DB`);
+        }
+      } catch (err) {
+        console.error('🧹 Cleanup worker error:', err);
+      }
+    }, 600000);
 
     server.listen(env.PORT, '0.0.0.0', () => {
       console.log(`🚀 Node.js backend running on http://0.0.0.0:${env.PORT}`);

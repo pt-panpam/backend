@@ -19,6 +19,10 @@ const s3Client = new S3Client({
 });
 
 export class StorageService {
+  /**
+   * Upload a file to Cloudflare R2.
+   * @returns The public URL of the uploaded file.
+   */
   static async uploadFile(
     buffer: Buffer,
     originalName: string,
@@ -40,10 +44,13 @@ export class StorageService {
     return `${PUBLIC_URL_BASE}/${key}`;
   }
 
+  /**
+   * Delete a file from Cloudflare R2 by its public URL.
+   */
   static async deleteFile(publicUrl: string): Promise<void> {
     const urlObj = new URL(publicUrl);
     const key = urlObj.pathname.replace(/^\//, '');
-    if (!key || key.startsWith('pub-')) return;
+    if (!key || key.startsWith('pub-')) return; // safety: don't delete root paths
 
     try {
       await s3Client.send(
@@ -57,6 +64,9 @@ export class StorageService {
     }
   }
 
+  /**
+   * Extract the key from a public URL for deletion.
+   */
   static urlToKey(publicUrl: string): string {
     const urlObj = new URL(publicUrl);
     return urlObj.pathname.replace(/^\//, '');

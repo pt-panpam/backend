@@ -434,6 +434,7 @@ router.patch('/user/location/', authenticate, async (req: AuthRequest, res: Resp
 router.post('/user/avatar/', authenticate, upload.single('profile_picture'), async (req: AuthRequest, res: Response) => {
   const user = req.user!;
   if (req.file) {
+    // Delete old avatar from R2 if it was stored there
     if (user.profilePicture && user.profilePicture.startsWith('https://pub-')) {
       await StorageService.deleteFile(user.profilePicture);
     }
@@ -444,6 +445,53 @@ router.post('/user/avatar/', authenticate, upload.single('profile_picture'), asy
   }
   await user.save();
   res.json(await serializeUser(user, user.id));
+});
+
+// Gallery — list (paginated)
+router.get('/user/gallery/', authenticate, async (req: AuthRequest, res: Response) => {
+  const images = await ProfileGallery.findAll({
+    where: { userId: req.user!.id },
+    order: [['order', 'ASC']],
+  });
+  res.json({ results: images.map(g => ({ id: g.id, image: g.image, order: g.order })) });
+});
+
+// Gallery — list for any user
+router.get('/users/:userId/gallery/', authenticate, async (req: AuthRequest, res: Response) => {
+  const userId = parseInt(req.params.userId as string);
+  if (isNaN(userId)) { res.status(400).json({ error: 'Invalid user ID' }); return; }
+  const images = await ProfileGallery.findAll({
+    where: { userId },
+    order: [['order', 'ASC']],
+  });
+  res.json({ results: images.map(g => ({ id: g.id, image: g.image, order: g.order })) });
+});
+
+// Gallery — upload
+router.post('/user/gallery/', authenticate, upload.single('image'), async (req: AuthRequest, res: Response) => {
+  if (!req.file) { res.status(400).json({ error: 'image is required' }); return; }
+  const order = req.body.order !== undefined ? Number(req.body.order) : 0;
+  const imageUrl = await StorageService.uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype, 'gallery');
+  const img = await ProfileGallery.create({
+    userId: req.user!.id,
+    image: imageUrl,
+    order,
+  } as any);
+  res.status(201).json({ id: img.id, image: img.image, order: img.order });
+});
+
+// Gallery — delete
+router.delete('/user/gallery/:id/delete/', authenticate, async (req: AuthRequest, res: Response) => {
+  const img = await ProfileGallery.findOne({
+    where: { id: Number(req.params.id), userId: req.user!.id },
+  });
+  if (!img) { res.status(404).json({ error: 'Image not found' }); return; }
+  // Delete from R2 if stored there
+  if (img.image && img.image.startsWith('https://pub-')) {
+    await StorageService.deleteFile(img.image);
+  }
+  await img.destroy();
+  res.status(204).send();
 });
 
 // Get hobbies
