@@ -216,7 +216,9 @@ router.patch('/user/', authenticate, async (req: AuthRequest, res: Response) => 
       res.status(400).json({ error: 'username is already taken' });
       return;
     }
-    throw err;
+    console.error('PATCH /user/ error:', err?.message || err);
+    res.status(500).json({ error: 'Failed to update profile' });
+    return;
   }
   res.json(await serializeUser(user, user.id));
 });
@@ -345,7 +347,17 @@ router.patch('/user/profile/', authenticate, async (req: AuthRequest, res: Respo
   if (req.body.looking_for_visibility !== undefined) user.lookingForVisibility = req.body.looking_for_visibility;
   if (req.body.hobbies_visibility !== undefined) user.hobbiesVisibility = req.body.hobbies_visibility;
   if (req.body.phone_visibility !== undefined) user.phoneVisibility = req.body.phone_visibility;
-  await user.save();
+  try {
+    await user.save();
+  } catch (err: any) {
+    if (err?.name === 'SequelizeUniqueConstraintError' && err?.fields?.username) {
+      res.status(400).json({ error: 'username is already taken' });
+      return;
+    }
+    console.error('PATCH /user/profile/ error:', err?.message || err);
+    res.status(500).json({ error: 'Failed to update profile' });
+    return;
+  }
   res.json(await serializeUser(user, user.id));
 });
 
