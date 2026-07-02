@@ -183,10 +183,10 @@ router.post('/refresh/', async (req: AuthRequest, res: Response) => {
 });
 
 // Check username availability
-router.get('/check-username/', async (req: AuthRequest, res: Response) => {
+router.get('/check-username/', authenticate, async (req: AuthRequest, res: Response) => {
   const username = (req.query.username as string || '').trim().toLowerCase();
   if (!username) { res.json({ available: false }); return; }
-  const existing = await User.findOne({ where: { username } });
+  const existing = await User.findOne({ where: { username, id: { [Op.ne]: req.user!.id } } });
   res.json({ available: !existing });
 });
 
