@@ -10,7 +10,6 @@ import { Friend } from '../models/Friend';
 import { AuthRequest, authenticate } from '../middleware/auth';
 import { upload } from '../middleware/upload';
 import { getIO } from '../io';
-import { StorageService } from '../services/StorageService';
 import { createAndDeliverNotification } from '../services/NotificationService';
 import { StorageService } from '../services/StorageService';
 
@@ -20,6 +19,33 @@ async function areFriends(userId: number, otherId: number): Promise<boolean> {
   const f = await Friend.findOne({ where: { userId, friendId: otherId } });
   return !!f;
 }
+
+// Unread message count across all conversations
+router.get('/unread-count/', authenticate, async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.id;
+  const convs = await Conversation.findAll({
+    include: [{
+      model: User,
+      as: 'participants',
+      through: { attributes: [] },
+    }],
+  });
+  let totalUnread = 0;
+  for (const c of convs) {
+    if (!(c as any).participants?.some((p: any) => p.id === userId)) continue;
+    const lastMsg = await Message.findOne({ where: { conversationId: c.id }, order: [['created_at', 'DESC']] });
+    if (!lastMsg) continue;
+    const readStatus = await ConversationReadStatus.findOne({ where: { conversationId: c.id, userId } });
+    const where: any = { conversationId: c.id };
+    if (readStatus?.lastReadMessageId) {
+      const lastReadMsg = await Message.findByPk(readStatus.lastReadMessageId);
+      if (lastReadMsg) where.created_at = { [Op.gt]: lastReadMsg.created_at };
+    }
+    const unread = await Message.count({ where: { ...where, senderId: { [Op.ne]: userId } } });
+    totalUnread += unread;
+  }
+  res.json({ count: totalUnread });
+});
 
 // Debug: check socket.io status
 router.get('/debug/socket/', (_req, res) => {
