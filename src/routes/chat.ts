@@ -10,6 +10,7 @@ import { Friend } from '../models/Friend';
 import { AuthRequest, authenticate } from '../middleware/auth';
 import { upload } from '../middleware/upload';
 import { getIO } from '../io';
+import { StorageService } from '../services/StorageService';
 import { createAndDeliverNotification } from '../services/NotificationService';
 
 const router = Router();
@@ -204,7 +205,7 @@ router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequ
     conversationId: conv.id,
     senderId: req.user!.id,
     text: text || '',
-    image: req.file ? `/uploads/${req.file.filename}` : (req.body.image_url || null),
+    image: req.file ? (await StorageService.uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype, 'chat')) : (req.body.image_url || null),
     replyToId: reply_to ? Number(reply_to) : null,
     postId: post_id ? Number(post_id) : null,
   } as any);
@@ -292,7 +293,7 @@ router.post('/send-voice/', authenticate, upload.single('voice'), async (req: Au
     conversationId: conv.id,
     senderId: req.user!.id,
     text: '',
-    audio: `/uploads/${req.file.filename}`,
+    audio: await StorageService.uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype, 'voice'),
   } as any);
   await conv.update({ updated_at: new Date() });
 

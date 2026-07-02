@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import { Op } from 'sequelize';
 import bcrypt from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
 import { sequelize } from '../config/database';
@@ -23,6 +24,7 @@ import { CrossEvent } from '../models/CrossEvent';
 import { AuthRequest, authenticate } from '../middleware/auth';
 import { upload } from '../middleware/upload';
 import { generateTokens, hashPassword, comparePassword, serializeUser } from '../utils/helpers';
+import { StorageService } from '../services/StorageService';
 import { createAndDeliverNotification } from '../services/NotificationService';
 
 const GOOGLE_WEB_CLIENT_ID = '399194215612-7f064r5thrf4bsksuodtfif851fsesqk.apps.googleusercontent.com';
@@ -207,7 +209,15 @@ router.patch('/user/', authenticate, async (req: AuthRequest, res: Response) => 
       (user as any)[dbKey] = req.body[key];
     }
   }
-  await user.save();
+  try {
+    await user.save();
+  } catch (err: any) {
+    if (err?.name === 'SequelizeUniqueConstraintError' && err?.fields?.username) {
+      res.status(400).json({ error: 'username is already taken' });
+      return;
+    }
+    throw err;
+  }
   res.json(await serializeUser(user, user.id));
 });
 
@@ -412,54 +422,16 @@ router.patch('/user/location/', authenticate, async (req: AuthRequest, res: Resp
 router.post('/user/avatar/', authenticate, upload.single('profile_picture'), async (req: AuthRequest, res: Response) => {
   const user = req.user!;
   if (req.file) {
-    user.profilePicture = `/uploads/${req.file.filename}`;
+    if (user.profilePicture && user.profilePicture.startsWith('https://pub-')) {
+      await StorageService.deleteFile(user.profilePicture);
+    }
+    const imageUrl = await StorageService.uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype, 'avatars');
+    user.profilePicture = imageUrl;
   } else if (req.body.profile_picture) {
     user.profilePicture = req.body.profile_picture;
   }
   await user.save();
   res.json(await serializeUser(user, user.id));
-});
-
-// Gallery — list (paginated)
-router.get('/user/gallery/', authenticate, async (req: AuthRequest, res: Response) => {
-  const images = await ProfileGallery.findAll({
-    where: { userId: req.user!.id },
-    order: [['order', 'ASC']],
-  });
-  res.json({ results: images.map(g => ({ id: g.id, image: g.image, order: g.order })) });
-});
-
-// Gallery — list for any user
-router.get('/users/:userId/gallery/', authenticate, async (req: AuthRequest, res: Response) => {
-  const userId = parseInt(req.params.userId as string);
-  if (isNaN(userId)) { res.status(400).json({ error: 'Invalid user ID' }); return; }
-  const images = await ProfileGallery.findAll({
-    where: { userId },
-    order: [['order', 'ASC']],
-  });
-  res.json({ results: images.map(g => ({ id: g.id, image: g.image, order: g.order })) });
-});
-
-// Gallery — upload
-router.post('/user/gallery/', authenticate, upload.single('image'), async (req: AuthRequest, res: Response) => {
-  if (!req.file) { res.status(400).json({ error: 'image is required' }); return; }
-  const order = req.body.order !== undefined ? Number(req.body.order) : 0;
-  const img = await ProfileGallery.create({
-    userId: req.user!.id,
-    image: `/uploads/${req.file.filename}`,
-    order,
-  } as any);
-  res.status(201).json({ id: img.id, image: img.image, order: img.order });
-});
-
-// Gallery — delete
-router.delete('/user/gallery/:id/delete/', authenticate, async (req: AuthRequest, res: Response) => {
-  const img = await ProfileGallery.findOne({
-    where: { id: Number(req.params.id), userId: req.user!.id },
-  });
-  if (!img) { res.status(404).json({ error: 'Image not found' }); return; }
-  await img.destroy();
-  res.status(204).send();
 });
 
 // Get hobbies
