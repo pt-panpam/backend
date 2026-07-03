@@ -44,6 +44,11 @@ export async function initDatabase(): Promise<void> {
     'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "phone_visibility" VARCHAR(20) DEFAULT \'friends\';',
     'ALTER TABLE "posts" ADD COLUMN IF NOT EXISTS "expires_at" TIMESTAMP DEFAULT NULL;',
     'ALTER TABLE "post_photos" ADD COLUMN IF NOT EXISTS "order" INTEGER DEFAULT 0;',
+    'ALTER TABLE "cross_events" ADD COLUMN IF NOT EXISTS "hex_id" TEXT DEFAULT NULL;',
+    'ALTER TABLE "cross_events" ADD COLUMN IF NOT EXISTS "hex_latitude" DOUBLE PRECISION DEFAULT NULL;',
+    'ALTER TABLE "cross_events" ADD COLUMN IF NOT EXISTS "hex_longitude" DOUBLE PRECISION DEFAULT NULL;',
+    'ALTER TABLE "cross_events" ADD COLUMN IF NOT EXISTS "reveal_delay_minutes" INTEGER DEFAULT 0;',
+    'ALTER TABLE "cross_events" ADD COLUMN IF NOT EXISTS "revealed_at" TIMESTAMPTZ DEFAULT NULL;',
   ];
   for (const sql of migrations) {
     try { await sequelize.query(sql); } catch (e: any) { console.warn('PG migration skipped:', e.message); }

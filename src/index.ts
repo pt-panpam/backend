@@ -240,7 +240,7 @@ async function start() {
         for (const post of expiredPosts) {
           const photos = await PostPhoto.findAll({ where: { postId: post.id } });
           for (const photo of photos) {
-            if (photo.image && photo.image.startsWith('https://pub-')) {
+            if (StorageService.isR2Url(photo.image)) {
               await StorageService.deleteFile(photo.image);
             }
           }
@@ -269,10 +269,10 @@ async function start() {
             },
           });
           for (const msg of expiredMessages) {
-            if (msg.image && msg.image.startsWith('https://pub-')) {
+            if (StorageService.isR2Url(msg.image)) {
               await StorageService.deleteFile(msg.image);
             }
-            if (msg.audio && msg.audio.startsWith('https://pub-')) {
+            if (StorageService.isR2Url(msg.audio)) {
               await StorageService.deleteFile(msg.audio);
             }
           }

@@ -19,70 +19,6 @@ type CrossingCallback = (event: {
   timestamp: Date;
 }) => void;
 
-function getRevealSlots(userSettings: { hour1: number; hour2: number }): Date[] {
-  const now = new Date();
-  const today1 = new Date(now);
-  today1.setHours(userSettings.hour1, 0, 0, 0);
-  const today2 = new Date(now);
-  today2.setHours(userSettings.hour2, 0, 0, 0);
-
-  // If the second slot has already passed today, first slot is tomorrow
-  if (now >= today2) {
-    const tomorrow1 = new Date(now);
-    tomorrow1.setDate(tomorrow1.getDate() + 1);
-    tomorrow1.setHours(userSettings.hour1, 0, 0, 0);
-    return [today2, tomorrow1];
-  }
-
-  // If the first slot has already passed
-  if (now >= today1) {
-    return [today1, today2];
-  }
-
-  // Both are still in the future (before first slot)
-  const yesterday2 = new Date(now);
-  yesterday2.setDate(yesterday2.getDate() - 1);
-  yesterday2.setHours(userSettings.hour2, 0, 0, 0);
-  return [yesterday2, today1];
-}
-
-function getNextRevealSlot(userSettings: { hour1: number; hour2: number }): Date {
-  const now = new Date();
-  const today1 = new Date(now);
-  today1.setHours(userSettings.hour1, 0, 0, 0);
-  const today2 = new Date(now);
-  today2.setHours(userSettings.hour2, 0, 0, 0);
-
-  if (now < today1) return today1;
-  if (now < today2) return today2;
-  const tomorrow1 = new Date(now);
-  tomorrow1.setDate(tomorrow1.getDate() + 1);
-  tomorrow1.setHours(userSettings.hour1, 0, 0, 0);
-  return tomorrow1;
-}
-
-function getPreviousRevealSlot(userSettings: { hour1: number; hour2: number }): Date {
-  const now = new Date();
-  const today1 = new Date(now);
-  today1.setHours(userSettings.hour1, 0, 0, 0);
-  const today2 = new Date(now);
-  today2.setHours(userSettings.hour2, 0, 0, 0);
-
-  if (now >= today2) return today2;
-  if (now >= today1) return today1;
-  const yesterday2 = new Date(now);
-  yesterday2.setDate(yesterday2.getDate() - 1);
-  yesterday2.setHours(userSettings.hour2, 0, 0, 0);
-  return yesterday2;
-}
-
-function formatRevealWindows(settings: { hour1: number; hour2: number }): { next: Date; previous: Date } {
-  return {
-    next: getNextRevealSlot(settings),
-    previous: getPreviousRevealSlot(settings),
-  };
-}
-
 export class CrossingService {
   private static instance: CrossingService;
   private io: SocketIOServer | null = null;
@@ -105,32 +41,25 @@ export class CrossingService {
     this.onCrossingCallbacks.push(callback);
   }
 
-  async getUserSettings(userId: number): Promise<{ hour1: number; hour2: number }> {
+  async getUserSettings(userId: number): Promise<{ hour1: number; hour2: number; delayMinutes: number }> {
     const settings = await CrossSettings.findOne({ where: { userId } });
     if (!settings) {
-      return { hour1: 9, hour2: 21 };
+      return { hour1: 9, hour2: 21, delayMinutes: 30 };
     }
-    return { hour1: settings.revealScheduleHour1, hour2: settings.revealScheduleHour2 };
+    return {
+      hour1: settings.revealScheduleHour1,
+      hour2: settings.revealScheduleHour2,
+      delayMinutes: settings.revealDelayMinutes || 30,
+    };
   }
 
-  async isCrossUnlocked(userId: number, crossedAt: Date): Promise<boolean> {
-    const settings = await this.getUserSettings(userId);
-    const previous = getPreviousRevealSlot(settings);
-    // Cross is unlocked if it happened before or at the previous reveal slot
-    return new Date(crossedAt) <= previous;
-  }
-
-  getRevealWindows(settings: { hour1: number; hour2: number }) {
-    return formatRevealWindows(settings);
-  }
-
-  getNextRevealLabel(settings: { hour1: number; hour2: number }): string {
-    const next = getNextRevealSlot(settings);
-    const hours = next.getHours();
-    const mins = next.getMinutes();
-    const ampm = hours >= 12 ? 'PM' : 'AM';
-    const h12 = hours % 12 || 12;
-    return `${h12}:${String(mins).padStart(2, '0')} ${ampm}`;
+  /**
+   * Check if cooling period has elapsed since the cross event.
+   * Uses the other user's revealDelayMinutes setting (snapshot on the event).
+   */
+  async isCrossUnlocked(userId: number, event: CrossEvent): Promise<boolean> {
+    if (!event.revealedAt) return false;
+    return new Date() >= new Date(event.revealedAt);
   }
 
   /**
@@ -146,12 +75,12 @@ export class CrossingService {
 
     const redis = RedisService.getInstance();
 
-    // — Full-resolution: store ALL raw points in Redis (24h TTL)
+    // Full-resolution: store ALL raw points in Redis (24h TTL)
     if (redis.isAvailable()) {
       await redis.setRoutePoints(userId, points).catch(() => {});
     }
 
-    // — Simplified: decimate to one point per 30-second window for PostgreSQL
+    // Simplified: decimate to one point per 30-second window for PostgreSQL
     const routePoints: { userId: number; latitude: number; longitude: number; hexId: string; recordedAt: Date }[] = [];
     let lastWindowStart = 0;
     for (const p of points) {
@@ -269,30 +198,40 @@ export class CrossingService {
             },
           });
 
-          // Use findOrCreate with a 24-hour time bucket to atomically prevent
-          // duplicate cross events when both users trigger detection simultaneously.
-          // Crosses between the same two users should only be recorded once per day.
+          // Only one cross event per day between the same two users
           const today = new Date();
           today.setHours(0, 0, 0, 0);
-          const bucketStart = today;
 
           try {
             const [event, created] = await CrossEvent.findOrCreate({
               where: {
                 user1Id: Math.min(userId, otherId),
                 user2Id: Math.max(userId, otherId),
-                crossedAt: { [Op.gte]: bucketStart },
+                crossedAt: { [Op.gte]: today },
               },
               defaults: {
                 user1Id: Math.min(userId, otherId),
                 user2Id: Math.max(userId, otherId),
                 latitude,
                 longitude,
+                hexId,
+                hexLatitude: hexCenter.lat,
+                hexLongitude: hexCenter.lng,
                 crossedAt: new Date(),
                 published: false,
               } as any,
             });
+
             if (!created) continue;
+
+            // Look up the OTHER user's reveal delay setting and compute revealed_at
+            const otherSettings = await this.getUserSettings(otherId);
+            const delayMs = otherSettings.delayMinutes * 60 * 1000;
+            const revealedAt = new Date(event.crossedAt.getTime() + delayMs);
+            await event.update({
+              revealDelayMinutes: otherSettings.delayMinutes,
+              revealedAt,
+            });
 
             result.crossedWith.push(otherId);
             result.crossingDetected = true;
@@ -334,7 +273,6 @@ export class CrossingService {
 
               this.io.to(`user:${userId}`).emit('cross:detected', eventData);
               this.io.to(`user:${otherId}`).emit('cross:detected', eventData);
-
             }
 
             for (const cb of this.onCrossingCallbacks) {
@@ -358,8 +296,7 @@ export class CrossingService {
   }
 
   private async enrichCrossEvent(userId: number, e: CrossEvent): Promise<any> {
-    const settings = await this.getUserSettings(userId);
-    const revealWindows = this.getRevealWindows(settings);
+    const isUnlocked = await this.isCrossUnlocked(userId, e);
     const otherId = e.user1Id === userId ? e.user2Id : e.user1Id;
     const other = await User.findByPk(otherId, {
       attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture', 'location'],
@@ -372,7 +309,6 @@ export class CrossingService {
         ],
       },
     }));
-    const isUnlocked = await this.isCrossUnlocked(userId, e.crossedAt);
     return {
       id: e.id,
       other_user: other
@@ -385,13 +321,16 @@ export class CrossingService {
             location: other.location,
           }
         : null,
-      latitude: e.latitude,
-      longitude: e.longitude,
+      hex_id: e.hexId,
+      // Return hex center (fuzzy location) instead of exact coordinates for privacy
+      latitude: isUnlocked ? e.hexLatitude || e.latitude : e.hexLatitude || e.latitude,
+      longitude: isUnlocked ? e.hexLongitude || e.longitude : e.hexLongitude || e.longitude,
       crossed_at: e.crossedAt,
       published: e.published,
       is_friend: isFriend,
       is_unlocked: isUnlocked,
-      next_reveal_at: revealWindows.next.toISOString(),
+      reveal_delay_minutes: e.revealDelayMinutes || 0,
+      revealed_at: e.revealedAt?.toISOString() || null,
     };
   }
 
@@ -438,7 +377,7 @@ export class CrossingService {
     let total = events.length;
     let unlocked = 0;
     for (const e of events) {
-      if (await this.isCrossUnlocked(userId, e.crossedAt)) {
+      if (await this.isCrossUnlocked(userId, e)) {
         unlocked++;
       }
     }
@@ -472,7 +411,6 @@ export class CrossingService {
     const minDate = dates[0];
     const maxDate = dates[dates.length - 1];
 
-    // Fetch all cross events for the date range
     const allEvents = await CrossEvent.findAll({
       where: {
         [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
@@ -485,13 +423,11 @@ export class CrossingService {
       },
     });
 
-    // Collect unique other users
     const otherUserIds = new Set<number>();
     for (const e of allEvents) {
       otherUserIds.add(e.user1Id === userId ? e.user2Id : e.user1Id);
     }
 
-    // Batch check friendship status
     const friendStatus = new Map<number, boolean>();
     if (otherUserIds.size > 0) {
       const friends = await Friend.findAll({
@@ -511,11 +447,6 @@ export class CrossingService {
       }
     }
 
-    // Cache unlock threshold
-    const settings = await this.getUserSettings(userId);
-    const previousSlot = getPreviousRevealSlot(settings);
-
-    // Build day map from recaps
     const dayMap = new Map<string, {
       total: number; unlocked: number;
       friend_total: number; friend_unlocked: number;
@@ -534,13 +465,12 @@ export class CrossingService {
       entry.unlocked += r.unlocked;
     }
 
-    // Aggregate events by date with friend/unknown breakdown
     for (const e of allEvents) {
       const dateStr = e.crossedAt.toISOString().split('T')[0];
       if (!dayMap.has(dateStr)) continue;
       const otherId = e.user1Id === userId ? e.user2Id : e.user1Id;
       const isFriend = friendStatus.get(otherId) ?? false;
-      const isUnlocked = new Date(e.crossedAt) <= previousSlot;
+      const isUnlocked = await this.isCrossUnlocked(userId, e);
       const entry = dayMap.get(dateStr)!;
       if (isFriend) {
         entry.friend_total++;
@@ -577,7 +507,7 @@ export class CrossingService {
       CrossEvent.findAll({
         where: {
           [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
-          crossedAt: { [Op.gte]: new Date(Date.now() - 24 * 60 * 60 * 1000) }, // crosses from last 24h
+          crossedAt: { [Op.gte]: new Date(Date.now() - 24 * 60 * 60 * 1000) },
         },
         order: [['crossed_at', 'ASC']],
       }),
@@ -591,8 +521,8 @@ export class CrossingService {
       crossMap.set(key, {
         otherId,
         otherName: user ? `${user.firstName} ${user.lastName}`.trim() : 'Someone',
-        lat: c.latitude,
-        lng: c.longitude,
+        lat: c.hexLatitude || c.latitude,
+        lng: c.hexLongitude || c.longitude,
       });
     }
 
@@ -607,7 +537,6 @@ export class CrossingService {
         hex_id: p.hexId,
         label: null,
       });
-      // Check if a cross happened at this point (within same minute)
       for (const [key, val] of crossMap) {
         const crossTime = parseInt(key.split(':')[1]);
         if (Math.abs(crossTime - timeKey) < 60000) {

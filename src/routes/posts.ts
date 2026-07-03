@@ -117,13 +117,20 @@ router.post('/create/', authenticate, upload.single('uploaded_photos'), async (r
     expiresAt,
     isActive: true,
   } as any);
-  if (req.file) {
-    const isVideo = req.file.mimetype.startsWith('video/');
-    const folder = isVideo ? 'videos' : 'posts';
-    const imageUrl = await StorageService.uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype, folder);
-    await PostPhoto.create({ postId: post.id, image: imageUrl, order: 0, type: isVideo ? 'video' : 'photo' } as any);
-  } else if (req.body.image_url) {
-    await PostPhoto.create({ postId: post.id, image: req.body.image_url, order: 0, type: 'photo' } as any);
+  try {
+    if (req.file) {
+      const isVideo = req.file.mimetype.startsWith('video/');
+      const folder = isVideo ? 'videos' : 'posts';
+      const imageUrl = await StorageService.uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype, folder);
+      await PostPhoto.create({ postId: post.id, image: imageUrl, order: 0, type: isVideo ? 'video' : 'photo' } as any);
+    } else if (req.body.image_url) {
+      await PostPhoto.create({ postId: post.id, image: req.body.image_url, order: 0, type: 'photo' } as any);
+    }
+  } catch (err) {
+    await post.destroy();
+    console.error('Failed to upload file to R2:', err);
+    res.status(500).json({ error: 'Failed to upload media' });
+    return;
   }
   const full = await Post.findByPk(post.id, {
     include: [
@@ -164,7 +171,7 @@ router.delete('/:id/', authenticate, async (req: AuthRequest, res: Response) => 
   // Delete photos from R2
   const photos = await PostPhoto.findAll({ where: { postId } });
   for (const photo of photos) {
-    if (photo.image && photo.image.startsWith('https://pub-')) {
+    if (StorageService.isR2Url(photo.image)) {
       await StorageService.deleteFile(photo.image);
     }
   }

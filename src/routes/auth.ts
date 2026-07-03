@@ -435,7 +435,7 @@ router.post('/user/avatar/', authenticate, upload.single('profile_picture'), asy
   const user = req.user!;
   if (req.file) {
     // Delete old avatar from R2 if it was stored there
-    if (user.profilePicture && user.profilePicture.startsWith('https://pub-')) {
+    if (StorageService.isR2Url(user.profilePicture)) {
       await StorageService.deleteFile(user.profilePicture);
     }
     const imageUrl = await StorageService.uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype, 'avatars');
@@ -487,7 +487,7 @@ router.delete('/user/gallery/:id/delete/', authenticate, async (req: AuthRequest
   });
   if (!img) { res.status(404).json({ error: 'Image not found' }); return; }
   // Delete from R2 if stored there
-  if (img.image && img.image.startsWith('https://pub-')) {
+  if (StorageService.isR2Url(img.image)) {
     await StorageService.deleteFile(img.image);
   }
   await img.destroy();

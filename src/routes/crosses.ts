@@ -9,19 +9,21 @@ import { CrossingService } from '../services/location/CrossingService';
 
 const router = Router();
 
+// Cross settings options: delay in minutes (30, 60, 90, 120)
+const VALID_DELAYS = [0, 15, 30, 60, 90, 120];
+
 // Get cross settings
 router.get('/settings/', authenticate, async (req: AuthRequest, res: Response) => {
   let settings = await CrossSettings.findOne({ where: { userId: req.user!.id } });
   if (!settings) {
     settings = await CrossSettings.create({ userId: req.user!.id } as any);
   }
-  const service = CrossingService.getInstance();
   res.json({
     reveal_schedule_hour_1: settings.revealScheduleHour1,
     reveal_schedule_hour_2: settings.revealScheduleHour2,
+    reveal_delay_minutes: settings.revealDelayMinutes || 30,
     updated_at: settings.updated_at,
     can_change: settings.canChange(),
-    next_reveal_at: service.getNextRevealLabel({ hour1: settings.revealScheduleHour1, hour2: settings.revealScheduleHour2 }),
   });
 });
 
@@ -37,14 +39,16 @@ router.patch('/settings/', authenticate, async (req: AuthRequest, res: Response)
   }
   if (req.body.reveal_schedule_hour_1 !== undefined) settings.revealScheduleHour1 = req.body.reveal_schedule_hour_1;
   if (req.body.reveal_schedule_hour_2 !== undefined) settings.revealScheduleHour2 = req.body.reveal_schedule_hour_2;
+  if (req.body.reveal_delay_minutes !== undefined && VALID_DELAYS.includes(req.body.reveal_delay_minutes)) {
+    settings.revealDelayMinutes = req.body.reveal_delay_minutes;
+  }
   await settings.save();
-  const service = CrossingService.getInstance();
   res.json({
     reveal_schedule_hour_1: settings.revealScheduleHour1,
     reveal_schedule_hour_2: settings.revealScheduleHour2,
+    reveal_delay_minutes: settings.revealDelayMinutes || 30,
     updated_at: settings.updated_at,
     can_change: settings.canChange(),
-    next_reveal_at: service.getNextRevealLabel({ hour1: settings.revealScheduleHour1, hour2: settings.revealScheduleHour2 }),
   });
 });
 

@@ -33,6 +33,11 @@ async function ensureColumns() {
     { table: 'conversations', column: 'disappearing_minutes', def: 'INTEGER DEFAULT 0' },
     { table: 'post_photos', column: 'type', def: 'VARCHAR(10) DEFAULT \'photo\'' },
     { table: 'messages', column: 'audio', def: 'VARCHAR(500) DEFAULT NULL' },
+    { table: 'cross_events', column: 'hex_id', def: 'TEXT DEFAULT NULL' },
+    { table: 'cross_events', column: 'hex_latitude', def: 'DOUBLE PRECISION DEFAULT NULL' },
+    { table: 'cross_events', column: 'hex_longitude', def: 'DOUBLE PRECISION DEFAULT NULL' },
+    { table: 'cross_events', column: 'reveal_delay_minutes', def: 'INTEGER DEFAULT 0' },
+    { table: 'cross_events', column: 'revealed_at', def: 'TIMESTAMPTZ DEFAULT NULL' },
   ];
 
   for (const { table, column, def } of addCols) {
