@@ -176,10 +176,10 @@ export class RedisService {
     }
   }
 
-  async publishCrossEvent(user1Id: number, user2Id: number, hexId: string, lat: number, lng: number): Promise<void> {
+  async publishCrossEvent(user1Id: number, user2Id: number, hexId: string, hexLat: number, hexLng: number): Promise<void> {
     if (!this.isAvailable()) return;
     try {
-      const payload = JSON.stringify({ user1Id, user2Id, hexId, lat, lng, timestamp: new Date().toISOString() });
+      const payload = JSON.stringify({ user1Id, user2Id, hexId, hexLat, hexLng, timestamp: new Date().toISOString() });
       await this.client!.publish('cross:detected', payload);
     } catch (err) {
       console.error('Redis publishCrossEvent error:', err);

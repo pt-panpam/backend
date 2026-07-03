@@ -1,6 +1,7 @@
 import { H3Service } from './H3Service';
 import { RedisService } from './RedisService';
 import { RouteService } from './RouteService';
+import { ProximityService } from './ProximityService';
 import { CrossEvent } from '../../models/CrossEvent';
 import { CrossSettings } from '../../models/CrossSettings';
 import { Recap } from '../../models/Recap';
@@ -60,6 +61,35 @@ export class CrossingService {
   async isCrossUnlocked(userId: number, event: CrossEvent): Promise<boolean> {
     if (!event.revealedAt) return false;
     return new Date() >= new Date(event.revealedAt);
+  }
+
+  /**
+   * Full profile is accessible after the current user's second recap slot (hour2).
+   * Default: 9 PM. Before that, basic profile (photo + name) is visible from the
+   * delay unlock, but tapping navigates to a "Full profile unlocks at [time]" modal.
+   */
+  async isProfileAccessible(userId: number): Promise<boolean> {
+    const settings = await this.getUserSettings(userId);
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    return currentMinutes >= settings.hour2 * 60;
+  }
+
+  async getNextProfileUnlock(userId: number): Promise<Date> {
+    const settings = await this.getUserSettings(userId);
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const slotMinutes = settings.hour2 * 60;
+
+    if (currentMinutes < slotMinutes) {
+      const d = new Date(now);
+      d.setHours(settings.hour2, 0, 0, 0);
+      return d;
+    }
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    d.setHours(settings.hour2, 0, 0, 0);
+    return d;
   }
 
   /**
@@ -153,150 +183,117 @@ export class CrossingService {
       await redis.setUserLocation(userId, hexId);
     }
 
-    // Check for hex collisions
-    let occupants: number[] = [];
-    if (redis.isAvailable()) {
-      occupants = await redis.getHexOccupants(hexId, userId);
-    } else {
-      const recentEvents = await CrossEvent.findAll({
-        where: {
-          [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
-          crossedAt: { [Op.gte]: new Date(Date.now() - 300000) },
-        },
-      });
-      const otherIds = new Set<number>();
-      for (const e of recentEvents) {
-        otherIds.add(e.user1Id === userId ? e.user2Id : e.user1Id);
+    // Use ProximityService.enterHexagon for idempotent encounter detection
+    const proximity = ProximityService.getInstance();
+    const timestamp = new Date();
+    const { newEncounters } = await proximity.enterHexagon(userId, hexId, latitude, longitude, timestamp);
+    const hexCenter = H3Service.hexToCenter(hexId);
+
+    for (const enc of newEncounters) {
+      const otherId = enc.userA === userId ? enc.userB : enc.userA;
+
+      result.crossedWith.push(otherId);
+      result.crossingDetected = true;
+
+      // Create CrossEvent for API backward compatibility
+      const otherSettings = await this.getUserSettings(otherId);
+      const delayMs = otherSettings.delayMinutes * 60 * 1000;
+      const revealedAt = new Date(timestamp.getTime() + delayMs);
+
+      try {
+        await CrossEvent.findOrCreate({
+          where: {
+            user1Id: Math.min(userId, otherId),
+            user2Id: Math.max(userId, otherId),
+            crossedAt: { [Op.gte]: new Date(timestamp.getTime() - 60000) },
+          },
+          defaults: {
+            user1Id: Math.min(userId, otherId),
+            user2Id: Math.max(userId, otherId),
+            latitude,
+            longitude,
+            hexId,
+            hexLatitude: hexCenter.lat,
+            hexLongitude: hexCenter.lng,
+            revealDelayMinutes: otherSettings.delayMinutes,
+            revealedAt,
+            crossedAt: timestamp,
+            published: false,
+          } as any,
+        });
+      } catch {}
+
+      if (route.isAvailable()) {
+        await route.insertCrossingRoute({
+          user1Id: Math.min(userId, otherId),
+          user2Id: Math.max(userId, otherId),
+          hexId,
+          lat1: userId === Math.min(userId, otherId) ? latitude : hexCenter.lat,
+          lng1: userId === Math.min(userId, otherId) ? longitude : hexCenter.lng,
+          lat2: userId === Math.max(userId, otherId) ? latitude : hexCenter.lat,
+          lng2: userId === Math.max(userId, otherId) ? longitude : hexCenter.lng,
+          crossedAt: timestamp,
+        }).catch(() => {});
       }
-      occupants = Array.from(otherIds);
-    }
 
-    if (occupants.length > 0) {
-      const hexCenter = H3Service.hexToCenter(hexId);
-      const neighborHexes = H3Service.getNeighborHexes(hexId, 1);
+      await redis.publishCrossEvent(userId, otherId, hexId, hexCenter.lat, hexCenter.lng);
 
-      let allNearby: Map<string, number[]> = new Map();
-      if (redis.isAvailable()) {
-        allNearby = await redis.getUsersInHexes(neighborHexes, userId);
-      }
-      allNearby.set(hexId, occupants);
-
-      const processedPairs = new Set<string>();
-
-      for (const [, members] of allNearby) {
-        for (const otherId of members) {
-          const pairKey = [userId, otherId].sort().join(':');
-          if (processedPairs.has(pairKey)) continue;
-          processedPairs.add(pairKey);
-
-          const isFriend = await Friend.findOne({
+      if (this.io) {
+        const otherUser = await User.findByPk(otherId, {
+          attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture'],
+        });
+        const eventData = {
+          id: enc.encounterId,
+          other_user: otherUser ? {
+            id: otherUser.id,
+            username: otherUser.username,
+            first_name: otherUser.firstName,
+            last_name: otherUser.lastName,
+            profile_picture: otherUser.profilePicture,
+          } : null,
+          hex_id: hexId,
+          latitude: hexCenter.lat,
+          longitude: hexCenter.lng,
+          crossed_at: timestamp,
+          revealed_at: revealedAt,
+          reveal_delay_minutes: otherSettings.delayMinutes,
+          is_unlocked: false,
+          is_friend: !!(await Friend.findOne({
             where: {
               [Op.or]: [
                 { userId, friendId: otherId },
                 { userId: otherId, friendId: userId },
               ],
             },
-          });
+          })),
+        };
 
-          // Only one cross event per day between the same two users
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
+        this.io.to(`user:${userId}`).emit('cross:detected', eventData);
+        this.io.to(`user:${otherId}`).emit('cross:detected', eventData);
+      }
 
-          try {
-            const [event, created] = await CrossEvent.findOrCreate({
-              where: {
-                user1Id: Math.min(userId, otherId),
-                user2Id: Math.max(userId, otherId),
-                crossedAt: { [Op.gte]: today },
-              },
-              defaults: {
-                user1Id: Math.min(userId, otherId),
-                user2Id: Math.max(userId, otherId),
-                latitude,
-                longitude,
-                hexId,
-                hexLatitude: hexCenter.lat,
-                hexLongitude: hexCenter.lng,
-                crossedAt: new Date(),
-                published: false,
-              } as any,
-            });
-
-            if (!created) continue;
-
-            // Look up the OTHER user's reveal delay setting and compute revealed_at
-            const otherSettings = await this.getUserSettings(otherId);
-            const delayMs = otherSettings.delayMinutes * 60 * 1000;
-            const revealedAt = new Date(event.crossedAt.getTime() + delayMs);
-            await event.update({
-              revealDelayMinutes: otherSettings.delayMinutes,
-              revealedAt,
-            });
-
-            result.crossedWith.push(otherId);
-            result.crossingDetected = true;
-
-            if (route.isAvailable()) {
-              await route.insertCrossingRoute({
-                user1Id: Math.min(userId, otherId),
-                user2Id: Math.max(userId, otherId),
-                hexId,
-                lat1: userId === Math.min(userId, otherId) ? latitude : hexCenter.lat,
-                lng1: userId === Math.min(userId, otherId) ? longitude : hexCenter.lng,
-                lat2: userId === Math.max(userId, otherId) ? latitude : hexCenter.lat,
-                lng2: userId === Math.max(userId, otherId) ? longitude : hexCenter.lng,
-                crossedAt: new Date(),
-              }).catch(() => {});
-            }
-
-            await redis.publishCrossEvent(userId, otherId, hexId, latitude, longitude);
-
-            if (this.io) {
-              const otherUser = await User.findByPk(otherId, {
-                attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture'],
-              });
-              const eventData = {
-                id: event.id,
-                other_user: otherUser ? {
-                  id: otherUser.id,
-                  username: otherUser.username,
-                  first_name: otherUser.firstName,
-                  last_name: otherUser.lastName,
-                  profile_picture: otherUser.profilePicture,
-                } : null,
-                hex_id: hexId,
-                latitude: latitude,
-                longitude: longitude,
-                crossed_at: event.crossedAt,
-                is_friend: !!isFriend,
-              };
-
-              this.io.to(`user:${userId}`).emit('cross:detected', eventData);
-              this.io.to(`user:${otherId}`).emit('cross:detected', eventData);
-            }
-
-            for (const cb of this.onCrossingCallbacks) {
-              cb({
-                user1Id: Math.min(userId, otherId),
-                user2Id: Math.max(userId, otherId),
-                hexId,
-                lat: latitude,
-                lng: longitude,
-                timestamp: new Date(),
-              });
-            }
-          } catch (err) {
-            console.error('CrossingService: error creating event:', err);
-          }
-        }
+      for (const cb of this.onCrossingCallbacks) {
+        cb({
+          user1Id: Math.min(userId, otherId),
+          user2Id: Math.max(userId, otherId),
+          hexId,
+          lat: latitude,
+          lng: longitude,
+          timestamp,
+        });
       }
     }
 
     return result;
   }
 
-  private async enrichCrossEvent(userId: number, e: CrossEvent): Promise<any> {
+  private async enrichCrossEvent(
+    userId: number,
+    e: CrossEvent,
+    profileAccessibleOverride?: boolean,
+  ): Promise<any> {
     const isUnlocked = await this.isCrossUnlocked(userId, e);
+    const profileAccessible = profileAccessibleOverride ?? await this.isProfileAccessible(userId);
     const otherId = e.user1Id === userId ? e.user2Id : e.user1Id;
     const other = await User.findByPk(otherId, {
       attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture', 'location'],
@@ -314,10 +311,10 @@ export class CrossingService {
       other_user: other
         ? {
             id: other.id,
-            username: other.username,
-            first_name: other.firstName,
-            last_name: other.lastName,
-            profile_picture: other.profilePicture,
+            username: isUnlocked ? other.username : undefined,
+            first_name: isUnlocked ? other.firstName : undefined,
+            last_name: isUnlocked ? other.lastName : undefined,
+            profile_picture: isUnlocked ? other.profilePicture : undefined,
             location: other.location,
           }
         : null,
@@ -329,6 +326,10 @@ export class CrossingService {
       published: e.published,
       is_friend: isFriend,
       is_unlocked: isUnlocked,
+      profile_accessible: isUnlocked && profileAccessible,
+      next_profile_unlock: isUnlocked && !profileAccessible
+        ? (await this.getNextProfileUnlock(userId)).toISOString()
+        : null,
       reveal_delay_minutes: e.revealDelayMinutes || 0,
       revealed_at: e.revealedAt?.toISOString() || null,
     };
@@ -339,28 +340,34 @@ export class CrossingService {
     limit: number = 50,
     hoursBack: number = 24
   ): Promise<any[]> {
-    const events = await CrossEvent.findAll({
-      where: {
-        [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
-        crossedAt: { [Op.gte]: new Date(Date.now() - hoursBack * 60 * 60 * 1000) },
-      },
-      order: [['crossed_at', 'DESC']],
-      limit,
-    });
-    return Promise.all(events.map((e) => this.enrichCrossEvent(userId, e)));
+    const [events, profileAccessible] = await Promise.all([
+      CrossEvent.findAll({
+        where: {
+          [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
+          crossedAt: { [Op.gte]: new Date(Date.now() - hoursBack * 60 * 60 * 1000) },
+        },
+        order: [['crossed_at', 'DESC']],
+        limit,
+      }),
+      this.isProfileAccessible(userId),
+    ]);
+    return Promise.all(events.map((e) => this.enrichCrossEvent(userId, e, profileAccessible)));
   }
 
   async getEventsByDate(userId: number, dateStr: string): Promise<any[]> {
     const start = new Date(dateStr + 'T00:00:00.000Z');
     const end = new Date(dateStr + 'T23:59:59.999Z');
-    const events = await CrossEvent.findAll({
-      where: {
-        [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
-        crossedAt: { [Op.between]: [start, end] },
-      },
-      order: [['crossed_at', 'DESC']],
-    });
-    return Promise.all(events.map((e) => this.enrichCrossEvent(userId, e)));
+    const [events, profileAccessible] = await Promise.all([
+      CrossEvent.findAll({
+        where: {
+          [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
+          crossedAt: { [Op.between]: [start, end] },
+        },
+        order: [['crossed_at', 'DESC']],
+      }),
+      this.isProfileAccessible(userId),
+    ]);
+    return Promise.all(events.map((e) => this.enrichCrossEvent(userId, e, profileAccessible)));
   }
 
   async generateAndStoreRecap(userId: number, date: string, period: 'am' | 'pm'): Promise<void> {

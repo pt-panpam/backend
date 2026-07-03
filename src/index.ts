@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import http from 'http';
+import https from 'https';
 import { env } from './config/env';
 import { sequelize, initDatabase } from './config/database';
 import { initModels } from './models';
@@ -10,11 +11,14 @@ import { setIO } from './io';
 import { RedisService } from './services/location/RedisService';
 import { RouteService } from './services/location/RouteService';
 import { CrossingService } from './services/location/CrossingService';
+import { runProximityMigrations } from './services/location/pgDb';
+import { startOutboxWorker } from './services/location/OutboxWorker';
+import { startNotificationQueue } from './services/location/NotificationQueue';
 import { CrossEvent } from './models/CrossEvent';
+import { CrossSettings } from './models/CrossSettings';
 import { Op } from 'sequelize';
 import { createAndDeliverNotification } from './services/NotificationService';
 import { StorageService } from './services/StorageService';
-import { User } from './models/User';
 import { Post } from './models/Post';
 import { PostPhoto } from './models/PostPhoto';
 import { PostLike } from './models/PostLike';
@@ -54,6 +58,34 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// R2 connectivity test (uploads a tiny test file, verifies public URL, then cleans up)
+function checkUrl(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    https.get(url, (res) => {
+      resolve(res.statusCode === 200);
+      res.resume();
+    }).on('error', () => resolve(false));
+  });
+}
+
+app.get('/api/health/r2', async (_req, res) => {
+  try {
+    const url = await StorageService.uploadFile(Buffer.from('ok'), 'test.txt', 'text/plain', '_healthcheck');
+    const urlAccessible = await checkUrl(url);
+    await StorageService.deleteFile(url);
+    res.json({
+      status: urlAccessible ? 'ok' : 'degraded',
+      message: urlAccessible
+        ? 'R2 upload, public URL, & delete all working'
+        : 'Upload works but public URL is not accessible — enable bucket public access in Cloudflare dashboard',
+      url,
+      url_accessible: urlAccessible,
+    });
+  } catch (err: any) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 // Error handler
 app.use(errorHandler);
 
@@ -77,12 +109,35 @@ async function start() {
     // Initialize CrossingService with Socket.IO
     CrossingService.getInstance().setIO(io);
 
+    // Run proximity schema migration (presences, encounters, outbox — idempotent)
+    await runProximityMigrations();
+
+    // Start outbox relay worker (SKIP LOCKED → BullMQ)
+    startOutboxWorker();
+
+    // Start BullMQ notification queue consumer
+    startNotificationQueue();
+
     // Subscribe to Redis cross:detected for cross-instance events
     redis.subscribe('cross:detected', (message) => {
       try {
         const data = JSON.parse(message);
-        io.to(`user:${data.user1Id}`).emit('cross:detected', data);
-        io.to(`user:${data.user2Id}`).emit('cross:detected', data);
+        io.to(`user:${data.user1Id}`).emit('cross:detected', {
+          id: data.id,
+          hex_id: data.hexId,
+          latitude: data.hexLat || data.lat,
+          longitude: data.hexLng || data.lng,
+          crossed_at: data.timestamp,
+          is_unlocked: false,
+        });
+        io.to(`user:${data.user2Id}`).emit('cross:detected', {
+          id: data.id,
+          hex_id: data.hexId,
+          latitude: data.hexLat || data.lat,
+          longitude: data.hexLng || data.lng,
+          crossed_at: data.timestamp,
+          is_unlocked: false,
+        });
       } catch {}
     });
 
@@ -94,98 +149,38 @@ async function start() {
       }).catch(() => {});
     }, 3600000);
 
-    // Add notified column if not exists (for migration)
-    sequelize.query(
-      `ALTER TABLE cross_events ADD COLUMN notified BOOLEAN DEFAULT 0;`
-    ).catch(() => {});
-
-    // 30-min delayed cross notification worker — check every 60s
-    setInterval(async () => {
-      try {
-        const cutoff = new Date(Date.now() - 30 * 60 * 1000);
-        const pending = await CrossEvent.findAll({
-          where: {
-            notified: false,
-            crossedAt: { [Op.lte]: cutoff },
-          },
-        });
-        for (const ev of pending) {
-          try {
-            const user1 = await User.findByPk(ev.user1Id, { attributes: ['id', 'firstName', 'profilePicture'] });
-            const user2 = await User.findByPk(ev.user2Id, { attributes: ['id', 'firstName', 'profilePicture'] });
-            const timeStr = ev.crossedAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-
-            // Notify user2 that user1 crossed them
-            if (user1) {
-              await createAndDeliverNotification({
-                userId: ev.user2Id,
-                type: 'cross_event',
-                title: 'Cross Paths',
-                body: `${user1.firstName || 'Someone'} crossed you at ${timeStr}`,
-                actorId: ev.user1Id,
-              });
-            }
-
-            // Notify user1 that user2 crossed them
-            if (user2) {
-              await createAndDeliverNotification({
-                userId: ev.user1Id,
-                type: 'cross_event',
-                title: 'Cross Paths',
-                body: `${user2.firstName || 'Someone'} crossed you at ${timeStr}`,
-                actorId: ev.user2Id,
-              });
-            }
-
-            ev.notified = true;
-            await ev.save();
-          } catch (err) {
-            console.error('Delayed notify error for event', ev.id, err);
-          }
-        }
-      } catch (err) {
-        console.error('Delayed notification worker error:', err);
-      }
-    }, 60000);
-
-    // Recap worker — snapshot recap at 9:00 and 21:00 daily
-    let lastRecapRun: string | null = null;
+    // Recap worker — check every 60s for users whose recap time has passed
+    let recapLastRun: string | null = null;
     setInterval(async () => {
       const now = new Date();
-      const h = now.getHours();
-      const m = now.getMinutes();
-      if (m !== 0 || (h !== 9 && h !== 21)) return;
-      const key = `${now.toISOString().split('T')[0]}-${h}`;
-      if (lastRecapRun === key) return;
-      lastRecapRun = key;
-
-      console.log(`🔄 Recap worker at ${now.toISOString()}`);
+      const currentMinute = now.getHours() * 60 + now.getMinutes();
+      const key = `${now.toISOString().split('T')[0]}-${currentMinute}`;
+      if (recapLastRun === key) return;
+      recapLastRun = key;
 
       try {
-        const period: 'am' | 'pm' = h === 9 ? 'am' : 'pm';
-        const todayStr = now.toISOString().split('T')[0];
         const crossService = CrossingService.getInstance();
+        const allSettings = await CrossSettings.findAll({ attributes: ['userId', 'revealScheduleHour1', 'revealScheduleHour2'] });
 
-        const prevSlot = new Date(now);
-        if (h === 9) {
-          prevSlot.setHours(21, 0, 0, 0);
-          prevSlot.setDate(prevSlot.getDate() - 1);
-        } else {
-          prevSlot.setHours(9, 0, 0, 0);
+        // Also include users with no settings (default 9 and 21)
+        const defaultHours = [9, 21];
+        const userRecapMap = new Map<number, { hour1: number; hour2: number }>();
+        for (const s of allSettings) {
+          userRecapMap.set(s.userId, { hour1: s.revealScheduleHour1, hour2: s.revealScheduleHour2 });
         }
 
-        const events = await CrossEvent.findAll({
-          where: { crossedAt: { [Op.between]: [prevSlot, now] } },
-        });
-
-        const userIds = new Set<number>();
-        for (const e of events) {
-          userIds.add(e.user1Id);
-          userIds.add(e.user2Id);
+        const matchedUserIds = new Set<number>();
+        for (const [userId, hours] of userRecapMap) {
+          if (currentMinute === hours.hour1 * 60 || currentMinute === hours.hour2 * 60) {
+            matchedUserIds.add(userId);
+          }
         }
 
         let notifiedCount = 0;
-        for (const userId of userIds) {
+        for (const userId of matchedUserIds) {
+          const todayStr = now.toISOString().split('T')[0];
+          const period: 'am' | 'pm' = currentMinute < 12 * 60 ? 'am' : 'pm';
+
           try {
             await crossService.generateAndStoreRecap(userId, todayStr, period);
           } catch {}
@@ -201,29 +196,25 @@ async function start() {
             notifiedCount++;
           } catch {}
 
-          io.to(`user:${userId}`).emit('cross:recap-ready', {
-            date: todayStr,
-            timestamp: now.toISOString(),
-          });
+          try {
+            io.to(`user:${userId}`).emit('cross:recap-ready', {
+              date: todayStr,
+              timestamp: now.toISOString(),
+            });
+          } catch {}
         }
 
         if (notifiedCount > 0) {
-          console.log(`✅ Recap worker stored recaps and notified ${notifiedCount} users`);
+          console.log(`✅ Recap worker notified ${notifiedCount} users`);
         }
 
-        // At 9pm recap, emit route:reset so frontend clears local trail for a fresh start
-        // (PG data stays for 3-day history; only ephemeral Redis + frontend storage reset)
-        if (h === 21) {
+        // At each user's recap time, also reset their route trail for a fresh start
+        for (const userId of matchedUserIds) {
           try {
             const redis = RedisService.getInstance();
-            for (const userId of userIds) {
-              await redis.clearRoutePoints(userId).catch(() => {});
-            }
-          } catch {}
-          for (const userId of userIds) {
+            await redis.clearRoutePoints(userId).catch(() => {});
             io.to(`user:${userId}`).emit('route:reset', { timestamp: now.toISOString() });
-          }
-          console.log(`🗑️ Route trails reset for ${userIds.size} users after 9pm recap`);
+          } catch {}
         }
       } catch (err) {
         console.error('❌ Recap worker error:', err);

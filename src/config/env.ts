@@ -17,8 +17,9 @@ export const env = {
   PG_DATABASE_URL: process.env.PG_DATABASE_URL || DEFAULT_PG_URL,
   H3_RESOLUTION: parseInt(process.env.H3_RESOLUTION || '9', 10),
   R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID || '35843aa68ded4d9fc6de85a47426fde5',
-  R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID || '5ff8b8c16acf42d0e3e6190db3b4e373',
-  R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY || '35f7354cbedacfcace375a507b01b10ec3a9909e3c64c288c50353aade5a709f',
+  AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY_ID || '5ff8b8c16acf42d0e3e6190db3b4e373',
+  AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY || process.env.R2_SECRET_ACCESS_KEY || '35f7354cbedacfcace375a507b01b10ec3a9909e3c64c288c50353aade5a709f',
   R2_BUCKET_NAME: process.env.R2_BUCKET_NAME || 'cross-media',
   R2_PUBLIC_URL: process.env.R2_PUBLIC_URL || '',
+  R2_ENDPOINT: process.env.R2_ENDPOINT || '',
 };

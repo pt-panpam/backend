@@ -29,6 +29,7 @@ async function ensureColumns() {
     { table: 'cross_settings', column: 'reveal_delay_minutes', def: 'INTEGER DEFAULT 60' },
     { table: 'cross_settings', column: 'reveal_schedule_hour_1', def: 'INTEGER DEFAULT 10' },
     { table: 'cross_settings', column: 'reveal_schedule_hour_2', def: 'INTEGER DEFAULT 22' },
+    { table: 'cross_settings', column: 'reveal_schedule_updated_at', def: 'TIMESTAMPTZ DEFAULT NULL' },
     { table: 'conversations', column: 'is_request', def: 'BOOLEAN DEFAULT false' },
     { table: 'conversations', column: 'disappearing_minutes', def: 'INTEGER DEFAULT 0' },
     { table: 'post_photos', column: 'type', def: 'VARCHAR(10) DEFAULT \'photo\'' },

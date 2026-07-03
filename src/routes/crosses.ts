@@ -22,8 +22,8 @@ router.get('/settings/', authenticate, async (req: AuthRequest, res: Response) =
     reveal_schedule_hour_1: settings.revealScheduleHour1,
     reveal_schedule_hour_2: settings.revealScheduleHour2,
     reveal_delay_minutes: settings.revealDelayMinutes || 30,
-    updated_at: settings.updated_at,
-    can_change: settings.canChange(),
+    reveal_schedule_updated_at: settings.revealScheduleUpdatedAt,
+    can_change_recap_timing: settings.canChangeRecapTiming(),
   });
 });
 
@@ -33,22 +33,38 @@ router.patch('/settings/', authenticate, async (req: AuthRequest, res: Response)
   if (!settings) {
     settings = await CrossSettings.create({ userId: req.user!.id } as any);
   }
-  if (!settings.canChange()) {
-    res.status(400).json({ error: 'Cannot change settings yet. 10-day cooldown applies.' });
+
+  const changingRecapTiming = req.body.reveal_schedule_hour_1 !== undefined || req.body.reveal_schedule_hour_2 !== undefined;
+
+  if (changingRecapTiming && !settings.canChangeRecapTiming()) {
+    res.status(400).json({ error: 'Recap timing can only be changed once every 10 days.' });
     return;
   }
-  if (req.body.reveal_schedule_hour_1 !== undefined) settings.revealScheduleHour1 = req.body.reveal_schedule_hour_1;
-  if (req.body.reveal_schedule_hour_2 !== undefined) settings.revealScheduleHour2 = req.body.reveal_schedule_hour_2;
+
+  let recapTimingChanged = false;
+  if (req.body.reveal_schedule_hour_1 !== undefined) {
+    settings.revealScheduleHour1 = req.body.reveal_schedule_hour_1;
+    recapTimingChanged = true;
+  }
+  if (req.body.reveal_schedule_hour_2 !== undefined) {
+    settings.revealScheduleHour2 = req.body.reveal_schedule_hour_2;
+    recapTimingChanged = true;
+  }
+  if (recapTimingChanged) {
+    settings.revealScheduleUpdatedAt = new Date();
+  }
+
   if (req.body.reveal_delay_minutes !== undefined && VALID_DELAYS.includes(req.body.reveal_delay_minutes)) {
     settings.revealDelayMinutes = req.body.reveal_delay_minutes;
   }
+
   await settings.save();
   res.json({
     reveal_schedule_hour_1: settings.revealScheduleHour1,
     reveal_schedule_hour_2: settings.revealScheduleHour2,
     reveal_delay_minutes: settings.revealDelayMinutes || 30,
-    updated_at: settings.updated_at,
-    can_change: settings.canChange(),
+    reveal_schedule_updated_at: settings.revealScheduleUpdatedAt,
+    can_change_recap_timing: settings.canChangeRecapTiming(),
   });
 });
 
