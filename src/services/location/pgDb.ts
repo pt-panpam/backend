@@ -1,12 +1,16 @@
 import { Pool } from 'pg';
 import { env } from '../../config/env';
 
+const pgUrl = env.DATABASE_URL;
+const needsSsl = !pgUrl.includes('localhost') && !pgUrl.includes('127.0.0.1');
+
 const pool = new Pool({
-  connectionString: env.DATABASE_URL,
+  connectionString: pgUrl,
   max: 10,
   min: 2,
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 5000,
+  ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
 });
 
 pool.on('error', (err) => {
