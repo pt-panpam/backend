@@ -45,10 +45,28 @@ export async function runProximityMigrations(): Promise<void> {
         presence_a UUID NOT NULL REFERENCES presences(id),
         presence_b UUID NOT NULL REFERENCES presences(id),
         overlap_started TIMESTAMPTZ NOT NULL,
-        overlap_ended TIMESTAMPTZ,
-        CONSTRAINT unique_encounter_pair UNIQUE (user_a, user_b, presence_a, presence_b)
+        overlap_ended TIMESTAMPTZ
       );
     `);
+
+    // Migrate constraint: old was (user_a, user_b, presence_a, presence_b),
+    // new is (user_a, user_b, hex_id) to prevent duplicate notifications
+    // for the same pair in the same hexagon.
+    await client.query(`
+      ALTER TABLE encounters DROP CONSTRAINT IF EXISTS unique_encounter_pair;
+    `).catch(() => {});
+    await client.query(`
+      DELETE FROM encounters e1 USING encounters e2
+      WHERE e1.id < e2.id
+        AND e1.user_a = e2.user_a
+        AND e1.user_b = e2.user_b
+        AND e1.hex_id = e2.hex_id;
+    `).catch(() => {});
+    await client.query(`
+      ALTER TABLE encounters ADD CONSTRAINT unique_encounter_pair UNIQUE (user_a, user_b, hex_id);
+    `).catch((err: any) => {
+      if (!err.message?.includes('already exists')) throw err;
+    });
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS encounter_notifications (

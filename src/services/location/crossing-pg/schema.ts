@@ -34,11 +34,18 @@ CREATE TABLE IF NOT EXISTS encounters (
     presence_a UUID NOT NULL REFERENCES presences(id),
     presence_b UUID NOT NULL REFERENCES presences(id),
     overlap_started TIMESTAMPTZ NOT NULL,
-    overlap_ended TIMESTAMPTZ,
-
-    -- CRITICAL: This unique constraint prevents duplicate race conditions
-    CONSTRAINT unique_encounter_pair UNIQUE (user_a, user_b, presence_a, presence_b)
+    overlap_ended TIMESTAMPTZ
 );
+
+-- Migrate constraint: old was (user_a, user_b, presence_a, presence_b),
+-- new is (user_a, user_b, hex_id) to prevent duplicate notifications.
+ALTER TABLE encounters DROP CONSTRAINT IF EXISTS unique_encounter_pair;
+DELETE FROM encounters e1 USING encounters e2
+WHERE e1.id < e2.id
+  AND e1.user_a = e2.user_a
+  AND e1.user_b = e2.user_b
+  AND e1.hex_id = e2.hex_id;
+ALTER TABLE encounters ADD CONSTRAINT unique_encounter_pair UNIQUE (user_a, user_b, hex_id);
 
 -- 3. Notifications: Tracks who gets notified and when (1 Encounter = 2 Notifications)
 CREATE TABLE IF NOT EXISTS notifications (

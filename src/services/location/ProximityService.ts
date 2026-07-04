@@ -101,7 +101,7 @@ export class ProximityService {
         const { rows: newEncounters } = await client.query(
           `INSERT INTO encounters (hex_id, user_a, user_b, presence_a, presence_b, overlap_started)
            VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (user_a, user_b, presence_a, presence_b) DO NOTHING
+           ON CONFLICT (user_a, user_b, hex_id) DO NOTHING
            RETURNING id`,
           [hexId, userA, userB, presenceA, presenceB, timestamp],
         );

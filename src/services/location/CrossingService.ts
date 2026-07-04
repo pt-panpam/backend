@@ -205,6 +205,7 @@ export class CrossingService {
           where: {
             user1Id: Math.min(userId, otherId),
             user2Id: Math.max(userId, otherId),
+            hexId,
             crossedAt: { [Op.gte]: new Date(timestamp.getTime() - 60000) },
           },
           defaults: {

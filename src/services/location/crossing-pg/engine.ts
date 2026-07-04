@@ -123,13 +123,13 @@ export async function enterHexagon(
       // 5. PostgreSQL superpower: INSERT ... ON CONFLICT DO NOTHING RETURNING
       //
       //    We throw every pair at the database. If a row with the same
-      //    (user_a, user_b, presence_a, presence_b) already exists, PG
-      //    silently ignores it. Only the truly new rows return an id.
+      //    (user_a, user_b, hex_id) already exists, PG silently ignores it.
+      //    Only the truly new rows return an id.
       // -------------------------------------------------------------------
       const { rows: newEncounters } = await client.query(
         `INSERT INTO encounters (hex_id, user_a, user_b, presence_a, presence_b, overlap_started)
          VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (user_a, user_b, presence_a, presence_b) DO NOTHING
+         ON CONFLICT (user_a, user_b, hex_id) DO NOTHING
          RETURNING id`,
         [hexId, userA, userB, presenceA, presenceB, time],
       );
