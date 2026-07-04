@@ -118,29 +118,6 @@ async function start() {
     // Start BullMQ notification queue consumer
     startNotificationQueue();
 
-    // Subscribe to Redis cross:detected for cross-instance events
-    redis.subscribe('cross:detected', (message) => {
-      try {
-        const data = JSON.parse(message);
-        io.to(`user:${data.user1Id}`).emit('cross:detected', {
-          id: data.id,
-          hex_id: data.hexId,
-          latitude: data.hexLat || data.lat,
-          longitude: data.hexLng || data.lng,
-          crossed_at: data.timestamp,
-          is_unlocked: false,
-        });
-        io.to(`user:${data.user2Id}`).emit('cross:detected', {
-          id: data.id,
-          hex_id: data.hexId,
-          latitude: data.hexLat || data.lat,
-          longitude: data.hexLng || data.lng,
-          crossed_at: data.timestamp,
-          is_unlocked: false,
-        });
-      } catch {}
-    });
-
     // Cleanup old route points & cross events every hour (retention: 3 days)
     setInterval(() => {
       route.cleanupOldRoutes().catch(() => {});

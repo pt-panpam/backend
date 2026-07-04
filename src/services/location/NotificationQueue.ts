@@ -4,6 +4,7 @@ import { User } from '../../models/User';
 import { createAndDeliverNotification } from '../NotificationService';
 import { ProximityService } from './ProximityService';
 import { pool } from './pgDb';
+import { getIO } from '../../io';
 
 function getConnectionOpts() {
   const url = new URL(env.REDIS_URL);
@@ -60,6 +61,11 @@ function startConsumer(): void {
         body: `${crosser?.firstName || 'Someone'} crossed you earlier today`,
         actorId: crosserId,
       });
+
+      const io = getIO();
+      if (io) {
+        io.to(`user:${receiverId}`).emit('cross:detected', { encounterId });
+      }
     },
     {
       connection: getConnectionOpts(),

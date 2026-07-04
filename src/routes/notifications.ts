@@ -8,7 +8,7 @@ const router = Router();
 // List notifications
 router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
   const page = parseInt(req.query.page as string) || 1;
-  const pageSize = 20;
+  const pageSize = parseInt(req.query.page_size as string) || 100;
   const { count, rows } = await Notification.findAndCountAll({
     where: { userId: req.user!.id },
     order: [['created_at', 'DESC']],

@@ -237,42 +237,6 @@ export class CrossingService {
         }).catch(() => {});
       }
 
-      await redis.publishCrossEvent(userId, otherId, hexId, hexCenter.lat, hexCenter.lng);
-
-      if (this.io) {
-        const otherUser = await User.findByPk(otherId, {
-          attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture'],
-        });
-        const eventData = {
-          id: enc.encounterId,
-          other_user: otherUser ? {
-            id: otherUser.id,
-            username: otherUser.username,
-            first_name: otherUser.firstName,
-            last_name: otherUser.lastName,
-            profile_picture: otherUser.profilePicture,
-          } : null,
-          hex_id: hexId,
-          latitude: hexCenter.lat,
-          longitude: hexCenter.lng,
-          crossed_at: timestamp,
-          revealed_at: revealedAt,
-          reveal_delay_minutes: otherSettings.delayMinutes,
-          is_unlocked: false,
-          is_friend: !!(await Friend.findOne({
-            where: {
-              [Op.or]: [
-                { userId, friendId: otherId },
-                { userId: otherId, friendId: userId },
-              ],
-            },
-          })),
-        };
-
-        this.io.to(`user:${userId}`).emit('cross:detected', eventData);
-        this.io.to(`user:${otherId}`).emit('cross:detected', eventData);
-      }
-
       for (const cb of this.onCrossingCallbacks) {
         cb({
           user1Id: Math.min(userId, otherId),
@@ -294,6 +258,8 @@ export class CrossingService {
     profileAccessibleOverride?: boolean,
   ): Promise<any> {
     const isUnlocked = await this.isCrossUnlocked(userId, e);
+    if (!isUnlocked) return null;
+
     const profileAccessible = profileAccessibleOverride ?? await this.isProfileAccessible(userId);
     const otherId = e.user1Id === userId ? e.user2Id : e.user1Id;
     const other = await User.findByPk(otherId, {
@@ -307,28 +273,28 @@ export class CrossingService {
         ],
       },
     }));
+    const showProfile = profileAccessible;
     return {
       id: e.id,
       other_user: other
         ? {
             id: other.id,
-            username: isUnlocked ? other.username : undefined,
-            first_name: isUnlocked ? other.firstName : undefined,
-            last_name: isUnlocked ? other.lastName : undefined,
-            profile_picture: isUnlocked ? other.profilePicture : undefined,
+            username: other.username,
+            first_name: showProfile ? other.firstName : null,
+            last_name: other.lastName,
+            profile_picture: other.profilePicture,
             location: other.location,
           }
         : null,
       hex_id: e.hexId,
-      // Return hex center (fuzzy location) instead of exact coordinates for privacy
-      latitude: isUnlocked ? e.hexLatitude || e.latitude : e.hexLatitude || e.latitude,
-      longitude: isUnlocked ? e.hexLongitude || e.longitude : e.hexLongitude || e.longitude,
+      latitude: e.hexLatitude || e.latitude,
+      longitude: e.hexLongitude || e.longitude,
       crossed_at: e.crossedAt,
       published: e.published,
       is_friend: isFriend,
       is_unlocked: isUnlocked,
-      profile_accessible: isUnlocked && profileAccessible,
-      next_profile_unlock: isUnlocked && !profileAccessible
+      profile_accessible: profileAccessible,
+      next_profile_unlock: !profileAccessible
         ? (await this.getNextProfileUnlock(userId)).toISOString()
         : null,
       reveal_delay_minutes: e.revealDelayMinutes || 0,
@@ -352,7 +318,8 @@ export class CrossingService {
       }),
       this.isProfileAccessible(userId),
     ]);
-    return Promise.all(events.map((e) => this.enrichCrossEvent(userId, e, profileAccessible)));
+    const enriched = await Promise.all(events.map((e) => this.enrichCrossEvent(userId, e, profileAccessible)));
+    return enriched.filter(Boolean);
   }
 
   async getEventsByDate(userId: number, dateStr: string): Promise<any[]> {
@@ -368,7 +335,8 @@ export class CrossingService {
       }),
       this.isProfileAccessible(userId),
     ]);
-    return Promise.all(events.map((e) => this.enrichCrossEvent(userId, e, profileAccessible)));
+    const enriched = await Promise.all(events.map((e) => this.enrichCrossEvent(userId, e, profileAccessible)));
+    return enriched.filter(Boolean);
   }
 
   async generateAndStoreRecap(userId: number, date: string, period: 'am' | 'pm'): Promise<void> {
@@ -382,10 +350,11 @@ export class CrossingService {
       },
     });
 
-    let total = events.length;
+    let total = 0;
     let unlocked = 0;
     for (const e of events) {
       if (await this.isCrossUnlocked(userId, e)) {
+        total++;
         unlocked++;
       }
     }
@@ -474,18 +443,18 @@ export class CrossingService {
     }
 
     for (const e of allEvents) {
+      if (!(await this.isCrossUnlocked(userId, e))) continue;
       const dateStr = e.crossedAt.toISOString().split('T')[0];
       if (!dayMap.has(dateStr)) continue;
       const otherId = e.user1Id === userId ? e.user2Id : e.user1Id;
       const isFriend = friendStatus.get(otherId) ?? false;
-      const isUnlocked = await this.isCrossUnlocked(userId, e);
       const entry = dayMap.get(dateStr)!;
       if (isFriend) {
         entry.friend_total++;
-        if (isUnlocked) entry.friend_unlocked++;
+        entry.friend_unlocked++;
       } else {
         entry.unknown_total++;
-        if (isUnlocked) entry.unknown_unlocked++;
+        entry.unknown_unlocked++;
       }
     }
 
