@@ -274,6 +274,7 @@ export class CrossingService {
       },
     }));
     const showProfile = profileAccessible;
+    const settings = await this.getUserSettings(userId);
     return {
       id: e.id,
       other_user: other
@@ -297,6 +298,7 @@ export class CrossingService {
       next_profile_unlock: !profileAccessible
         ? (await this.getNextProfileUnlock(userId)).toISOString()
         : null,
+      reveal_schedule_hour_2: settings.hour2,
       reveal_delay_minutes: e.revealDelayMinutes || 0,
       revealed_at: e.revealedAt?.toISOString() || null,
     };

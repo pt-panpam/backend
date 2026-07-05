@@ -1,5 +1,4 @@
 import { Router, Response } from 'express';
-import { Op } from 'sequelize';
 import { Notification } from '../models/Notification';
 import { AuthRequest, authenticate } from '../middleware/auth';
 

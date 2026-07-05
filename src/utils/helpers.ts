@@ -74,34 +74,6 @@ export async function serializeUser(user: User, currentUserId?: number) {
   };
 }
 
-export async function serializeUserProfile(user: User, currentUserId?: number) {
-  const [total_crosses, friend_count, is_friend, friend_request_status] = await Promise.all([
-    CrossEvent.count({ where: { [Op.or]: [{ user1Id: user.id }, { user2Id: user.id }], published: true } }),
-    Friend.count({ where: { [Op.or]: [{ userId: user.id }, { friendId: user.id }] } }),
-    currentUserId ? Friend.findOne({ where: { [Op.or]: [{ userId: currentUserId, friendId: user.id }, { userId: user.id, friendId: currentUserId }] } }).then(Boolean) : Promise.resolve(false),
-    currentUserId ? FriendRequest.findOne({ where: { [Op.or]: [{ fromUserId: currentUserId, toUserId: user.id }, { fromUserId: user.id, toUserId: currentUserId }], status: 'pending' } }).then((fr) => fr ? (fr.fromUserId === currentUserId ? 'sent' : 'received') : null) : Promise.resolve(null),
-  ]);
-  return {
-    id: user.id,
-    username: user.username,
-    first_name: user.firstName,
-    last_name: user.lastName,
-    profile_picture: user.profilePicture,
-    age: user.age,
-    sex: user.sex,
-    bio: user.bio,
-    school: user.school || null,
-    work: user.work || null,
-    location: user.location,
-    hobbies: user.hobbies,
-    total_crosses,
-    friend_count,
-    is_friend,
-    friend_request_status,
-    last_seen: user.lastSeen,
-  };
-}
-
 export function serializePost(post: any, currentUserId?: number) {
   return {
     id: post.id,

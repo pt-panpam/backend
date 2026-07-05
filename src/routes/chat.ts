@@ -8,10 +8,8 @@ import { ConversationReadStatus } from '../models/ConversationReadStatus';
 import { Call } from '../models/Call';
 import { Friend } from '../models/Friend';
 import { AuthRequest, authenticate } from '../middleware/auth';
-import { upload } from '../middleware/upload';
 import { getIO } from '../io';
 import { createAndDeliverNotification } from '../services/NotificationService';
-import { StorageService } from '../services/StorageService';
 
 const router = Router();
 
@@ -89,7 +87,6 @@ router.get('/conversations/', authenticate, async (req: AuthRequest, res: Respon
           conversation: lastMsg.conversationId,
           sender: { id: lastMsg.senderId },
           text: lastMsg.text,
-          image: lastMsg.image,
           reply_to: null,
           post: null,
           is_read: lastMsg.isRead,
@@ -165,7 +162,7 @@ router.get('/conversations/:id/', authenticate, async (req: AuthRequest, res: Re
     where: { conversationId: conv.id },
     include: [
       { model: User, as: 'sender', attributes: ['id', 'firstName', 'lastName', 'profilePicture'] },
-      { model: Message, as: 'replyTo', attributes: ['id', 'text', 'image', 'senderId'] },
+      { model: Message, as: 'replyTo', attributes: ['id', 'text', 'senderId'] },
       { model: Post, as: 'post', attributes: ['id', 'caption'] },
     ],
     order: [['created_at', 'ASC']],
@@ -187,8 +184,7 @@ router.get('/conversations/:id/', authenticate, async (req: AuthRequest, res: Re
       conversation: m.conversationId,
       sender: { id: (m as any).sender?.id, first_name: (m as any).sender?.firstName, profile_picture: (m as any).sender?.profilePicture },
       text: m.text,
-      image: m.image,
-      reply_to: (m as any).replyTo ? { id: (m as any).replyTo.id, text: (m as any).replyTo.text, image: (m as any).replyTo.image } : null,
+      reply_to: (m as any).replyTo ? { id: (m as any).replyTo.id, text: (m as any).replyTo.text } : null,
       post: (m as any).post ? { id: (m as any).post.id, caption: (m as any).post.caption } : null,
       is_read: m.isRead,
       created_at: m.created_at,
@@ -198,12 +194,12 @@ router.get('/conversations/:id/', authenticate, async (req: AuthRequest, res: Re
   });
 });
 
-// Start a conversation / send message
-router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequest, res: Response) => {
+// Send message
+router.post('/send/', authenticate, async (req: AuthRequest, res: Response) => {
   const receiver_id = Number(req.body.receiver_id);
-  const text = req.body.text || (req.query.text as string) || '';
-  const reply_to = req.body.reply_to || (req.query.reply_to as string);
-  const post_id = req.body.post_id || (req.query.post_id as string);
+  const text = req.body.text || '';
+  const reply_to = req.body.reply_to;
+  const post_id = req.body.post_id;
   if (!receiver_id) { res.status(400).json({ error: 'receiver_id required' }); return; }
 
   // Find existing conversation
@@ -232,7 +228,6 @@ router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequ
     conversationId: conv.id,
     senderId: req.user!.id,
     text: text || '',
-    image: req.file ? (await StorageService.uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype, 'chat')) : (req.body.image_url || null),
     replyToId: reply_to ? Number(reply_to) : null,
     postId: post_id ? Number(post_id) : null,
   } as any);
@@ -241,7 +236,7 @@ router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequ
   const full = await Message.findByPk(msg.id, {
     include: [
       { model: User, as: 'sender', attributes: ['id', 'firstName', 'lastName', 'profilePicture'] },
-      { model: Message, as: 'replyTo', attributes: ['id', 'text', 'image', 'senderId'] },
+      { model: Message, as: 'replyTo', attributes: ['id', 'text', 'senderId'] },
       { model: Post, as: 'post', attributes: ['id', 'caption'] },
     ],
   });
@@ -251,8 +246,7 @@ router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequ
     conversation: msg.conversationId,
     sender: { id: (full as any)?.sender?.id, first_name: (full as any)?.sender?.firstName, profile_picture: (full as any)?.sender?.profilePicture },
     text: msg.text,
-    image: msg.image,
-    reply_to: (full as any)?.replyTo ? { id: (full as any).replyTo.id, text: (full as any).replyTo.text, image: (full as any).replyTo.image } : null,
+    reply_to: (full as any)?.replyTo ? { id: (full as any).replyTo.id, text: (full as any).replyTo.text } : null,
     post: (full as any)?.post ? { id: (full as any).post.id, caption: (full as any).post.caption } : null,
     is_read: msg.isRead,
     created_at: msg.created_at,
@@ -267,7 +261,7 @@ router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequ
 
   // Create notification for the receiver
   const sender = req.user!
-  const body = text ? (text.length > 100 ? text.slice(0, 100) + '...' : text) : (msg.image ? 'Sent a photo' : 'Sent a message')
+  const body = text ? (text.length > 100 ? text.slice(0, 100) + '...' : text) : 'Sent a message'
   await createAndDeliverNotification({
     userId: Number(receiver_id),
     type: 'new_message',
@@ -275,72 +269,6 @@ router.post('/send/', authenticate, upload.single('image'), async (req: AuthRequ
     body,
     actorId: sender.id,
   });
-
-  res.status(201).json(msgData);
-});
-
-// Send voice message
-router.post('/send-voice/', authenticate, upload.single('voice'), async (req: AuthRequest, res: Response) => {
-  const receiver_id = Number(req.body.receiver_id);
-  if (!receiver_id) { res.status(400).json({ error: 'receiver_id required' }); return; }
-  if (!req.file) { res.status(400).json({ error: 'voice file required' }); return; }
-
-  // Find or create conversation (same logic as send route)
-  const allConvs = await Conversation.findAll({
-    include: [{
-      model: User,
-      as: 'participants',
-      through: { attributes: [] },
-    }],
-  });
-  let conv = allConvs.find(c =>
-    (c as any).participants?.length === 2 &&
-    (c as any).participants?.some((p: any) => p.id === req.user!.id) &&
-    (c as any).participants?.some((p: any) => p.id === receiver_id)
-  );
-
-  if (!conv) {
-    const { Op } = require('sequelize');
-    const { Friend } = require('../models/Friend');
-    const friends = await Friend.findOne({
-      where: {
-        [Op.or]: [
-          { userId: req.user!.id, friendId: receiver_id },
-          { userId: receiver_id, friendId: req.user!.id },
-        ],
-      },
-    });
-    conv = await Conversation.create({ isRequest: !friends } as any) as any;
-    await (conv as any).setParticipants([req.user!.id, receiver_id]);
-  }
-
-  if (!conv) { res.status(500).json({ error: 'Failed to create conversation' }); return; }
-
-  const msg = await Message.create({
-    conversationId: conv.id,
-    senderId: req.user!.id,
-    text: '',
-    audio: await StorageService.uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype, 'voice'),
-  } as any);
-  await conv.update({ updated_at: new Date() });
-
-  const msgData = {
-    id: msg.id,
-    conversation: msg.conversationId,
-    sender: { id: req.user!.id },
-    text: '',
-    audio: msg.audio,
-    image: null,
-    reply_to: null,
-    post: null,
-    is_read: msg.isRead,
-    created_at: msg.created_at,
-  };
-
-  const sio = getIO();
-  sio?.to(`conversation:${conv.id}`).emit('message:new', msgData);
-  sio?.to(`user:${receiver_id}`).emit('message:new', msgData);
-  sio?.to(`user:${receiver_id}`).emit('conversation:updated', { conversationId: conv.id });
 
   res.status(201).json(msgData);
 });

@@ -220,37 +220,6 @@ async function start() {
           await post.destroy();
         }
 
-        // 2. Disappearing chat media — delete from R2 then remove expired records
-        const conversations = await Conversation.findAll({
-          where: { disappearingMinutes: { [Op.gt]: 0 } },
-        });
-        for (const conv of conversations) {
-          const cutoff = new Date(Date.now() - conv.disappearingMinutes * 60 * 1000);
-          const expiredMessages = await Message.findAll({
-            where: {
-              conversationId: conv.id,
-              created_at: { [Op.lt]: cutoff },
-              [Op.or]: [
-                { image: { [Op.ne]: null } },
-                { audio: { [Op.ne]: null } },
-              ],
-            },
-          });
-          for (const msg of expiredMessages) {
-            if (StorageService.isR2Url(msg.image)) {
-              await StorageService.deleteFile(msg.image);
-            }
-            if (StorageService.isR2Url(msg.audio)) {
-              await StorageService.deleteFile(msg.audio);
-            }
-          }
-          if (expiredMessages.length > 0) {
-            await Message.destroy({
-              where: { id: { [Op.in]: expiredMessages.map(m => m.id) } },
-            });
-          }
-        }
-
         if (expiredPosts.length > 0) {
           console.log(`🧹 Cleaned up ${expiredPosts.length} expired posts from R2 & DB`);
         }

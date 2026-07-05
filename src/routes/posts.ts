@@ -309,7 +309,6 @@ router.post('/:id/comments/', authenticate, async (req: AuthRequest, res: Respon
         conversation: conv.id,
         sender: { id: (msgFull as any)?.sender?.id, first_name: (msgFull as any)?.sender?.firstName, profile_picture: (msgFull as any)?.sender?.profilePicture },
         text: msg.text,
-        image: msg.image,
         reply_to: null,
         post: (msgFull as any)?.post ? { id: (msgFull as any).post.id, caption: (msgFull as any).post.caption } : null,
         is_read: msg.isRead,

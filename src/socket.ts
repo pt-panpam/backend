@@ -8,7 +8,7 @@ import { Message } from './models/Message';
 import { Post } from './models/Post';
 import { ConversationReadStatus } from './models/ConversationReadStatus';
 import { Friend } from './models/Friend';
-import { sendExpoPush, createAndDeliverNotification } from './services/NotificationService';
+import { createAndDeliverNotification } from './services/NotificationService';
 
 interface AuthenticatedSocket extends Socket {
   userId?: number;
@@ -71,7 +71,7 @@ export function setupSocket(server: HTTPServer): Server {
     });
 
     // Send message
-    socket.on('message:send', async (data: { conversationId?: number; receiverId?: number; text?: string; image?: string; reply_to?: number; post_id?: number }, callback) => {
+    socket.on('message:send', async (data: { conversationId?: number; receiverId?: number; text?: string; reply_to?: number; post_id?: number }, callback) => {
       try {
         let convId = data.conversationId;
 
@@ -108,7 +108,6 @@ export function setupSocket(server: HTTPServer): Server {
           conversationId: convId,
           senderId: userId,
           text: data.text || '',
-          image: data.image || null,
           replyToId: data.reply_to || null,
           postId: data.post_id || null,
         } as any);
@@ -118,7 +117,7 @@ export function setupSocket(server: HTTPServer): Server {
         const full = await Message.findByPk(msg.id, {
           include: [
             { model: User, as: 'sender', attributes: ['id', 'firstName', 'lastName', 'profilePicture'] },
-            { model: Message, as: 'replyTo', attributes: ['id', 'text', 'image', 'senderId'] },
+            { model: Message, as: 'replyTo', attributes: ['id', 'text', 'senderId'] },
             { model: Post, as: 'post', attributes: ['id', 'caption'] },
           ],
         });
@@ -132,8 +131,7 @@ export function setupSocket(server: HTTPServer): Server {
             profile_picture: (full as any)?.sender?.profilePicture,
           },
           text: msg.text,
-          image: msg.image,
-          reply_to: (full as any)?.replyTo ? { id: (full as any).replyTo.id, text: (full as any).replyTo.text, image: (full as any).replyTo.image } : null,
+          reply_to: (full as any)?.replyTo ? { id: (full as any).replyTo.id, text: (full as any).replyTo.text } : null,
           post: (full as any)?.post ? { id: (full as any).post.id, caption: (full as any).post.caption } : null,
           is_read: msg.isRead,
           created_at: msg.created_at,
@@ -152,7 +150,7 @@ export function setupSocket(server: HTTPServer): Server {
           if (sender && data.receiverId) {
             const body = data.text
               ? (data.text.length > 100 ? data.text.slice(0, 100) + '...' : data.text)
-              : (data.image ? 'Sent a photo' : 'Sent a message');
+              : 'Sent a message';
             await createAndDeliverNotification({
               userId: data.receiverId,
               type: 'new_message',
