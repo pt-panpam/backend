@@ -6,7 +6,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "create-accounts": "tsx src/create-accounts.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1078.0",
