@@ -108,15 +108,21 @@ router.get('/:id/', authenticate, async (req: AuthRequest, res: Response) => {
 // Create post
 router.post('/create/', authenticate, upload.single('uploaded_photos'), async (req: AuthRequest, res: Response) => {
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  
+  // 🔴 FIX APPLIED HERE: Parse stringified coordinates into floats
+  const parsedLatitude = req.body.latitude ? parseFloat(req.body.latitude) : null;
+  const parsedLongitude = req.body.longitude ? parseFloat(req.body.longitude) : null;
+
   const post = await Post.create({
     userId: req.user!.id,
     caption: req.body.caption || '',
     location: req.body.location || '',
-    latitude: req.body.latitude || null,
-    longitude: req.body.longitude || null,
+    latitude: parsedLatitude,
+    longitude: parsedLongitude,
     expiresAt,
     isActive: true,
   } as any);
+
   try {
     if (req.file) {
       const isVideo = req.file.mimetype.startsWith('video/');
@@ -132,6 +138,7 @@ router.post('/create/', authenticate, upload.single('uploaded_photos'), async (r
     res.status(500).json({ error: 'Failed to upload media' });
     return;
   }
+  
   const full = await Post.findByPk(post.id, {
     include: [
       { model: User, as: 'user', attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture'] },

@@ -27,7 +27,7 @@ import { createAndDeliverNotification } from '../services/NotificationService';
 
 const GOOGLE_WEB_CLIENT_ID = '399194215612-a7l8orc9mhopfjdavdp2g43gm4fdg6kr.apps.googleusercontent.com';
 const GOOGLE_IOS_CLIENT_ID = '399194215612-3mkc25nqrdim0152lvqc7oi510uukld4.apps.googleusercontent.com';
-const GOOGLE_ANDROID_CLIENT_ID = '399194215612-jjg6mv3hm4i0usmj90c9j3bng2i17nvm.apps.googleusercontent.com';
+const GOOGLE_ANDROID_CLIENT_ID = '480558365000-7k6a4k0evbghpbqa9u3mphp7fmrll28e.apps.googleusercontent.com';
 const googleClient = new OAuth2Client();
 
 const router = Router();
@@ -438,7 +438,7 @@ router.post('/user/avatar/', authenticate, upload.single('profile_picture'), asy
     }
     const imageUrl = await StorageService.uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype, 'avatars');
     user.profilePicture = imageUrl;
-  } else if (req.body.profile_picture) {
+  } else if (req.body.profile_picture && typeof req.body.profile_picture === 'string') {
     user.profilePicture = req.body.profile_picture;
   }
   await user.save();
