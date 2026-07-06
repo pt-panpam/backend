@@ -50,45 +50,71 @@ export class CrossingService {
     return {
       hour1: settings.revealScheduleHour1,
       hour2: settings.revealScheduleHour2,
-      delayMinutes: settings.revealDelayMinutes || 30,
+      delayMinutes: settings.revealDelayMinutes ?? 30,
     };
   }
 
   /**
-   * Check if cooling period has elapsed since the cross event.
-   * Uses the other user's revealDelayMinutes setting (snapshot on the event).
+   * Compute when a cross event should unlock based on which recap slot
+   * the crossing time falls into.
+   *
+   * - Crossed before Slot 1  → unlocks at Slot 1 (same day)
+   * - Crossed between Slots 1 & 2 → unlocks at Slot 2 (same day)
+   * - Crossed after Slot 2   → unlocks at Slot 1 (next day)
+   *
+   * All comparisons use local time to match the user's timezone.
    */
-  async isCrossUnlocked(userId: number, event: CrossEvent): Promise<boolean> {
-    if (!event.revealedAt) return false;
-    return new Date() >= new Date(event.revealedAt);
+  private computeSlotUnlockTime(crossedAt: Date, hour1: number, hour2: number): Date {
+    const crossedMinutes = crossedAt.getHours() * 60 + crossedAt.getMinutes();
+    const unlockDate = new Date(crossedAt);
+
+    if (crossedMinutes < hour1 * 60) {
+      unlockDate.setHours(hour1, 0, 0, 0);
+    } else if (crossedMinutes >= hour1 * 60 && crossedMinutes < hour2 * 60) {
+      unlockDate.setHours(hour2, 0, 0, 0);
+    } else {
+      unlockDate.setDate(unlockDate.getDate() + 1);
+      unlockDate.setHours(hour1, 0, 0, 0);
+    }
+
+    return unlockDate;
   }
 
   /**
-   * Full profile is accessible after the current user's second recap slot (hour2).
-   * Default: 9 PM. Before that, basic profile (photo + name) is visible from the
-   * delay unlock, but tapping navigates to a "Full profile unlocks at [time]" modal.
+   * Check if a cross event is unlocked based on which recap slot
+   * the crossing time falls into (viewer's schedule).
    */
-  async isProfileAccessible(userId: number): Promise<boolean> {
+  async isCrossUnlocked(userId: number, event: CrossEvent): Promise<boolean> {
     const settings = await this.getUserSettings(userId);
-    const now = new Date();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
-    return currentMinutes >= settings.hour2 * 60;
+    const unlockTime = this.computeSlotUnlockTime(event.crossedAt, settings.hour1, settings.hour2);
+    return new Date() >= unlockTime;
+  }
+
+  /**
+   * Full profile is accessible when the event's slot unlock time has passed.
+   * Previously also checked a reveal window (hour1-hour2), but now the
+   * slot-based unlock replaces both the cooling period and the window check.
+   */
+  async isProfileAccessible(userId: number, crossedAt?: Date): Promise<boolean> {
+    if (!crossedAt) return false;
+    const settings = await this.getUserSettings(userId);
+    const unlockTime = this.computeSlotUnlockTime(crossedAt, settings.hour1, settings.hour2);
+    return new Date() >= unlockTime;
   }
 
   async getNextProfileUnlock(userId: number): Promise<Date> {
     const settings = await this.getUserSettings(userId);
     const now = new Date();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
-    const slotMinutes = settings.hour2 * 60;
 
-    if (currentMinutes < slotMinutes) {
+    if (currentMinutes < settings.hour1 * 60) {
       const d = new Date(now);
-      d.setHours(settings.hour2, 0, 0, 0);
+      d.setHours(settings.hour1, 0, 0, 0);
       return d;
     }
     const d = new Date(now);
     d.setDate(d.getDate() + 1);
-    d.setHours(settings.hour2, 0, 0, 0);
+    d.setHours(settings.hour1, 0, 0, 0);
     return d;
   }
 
@@ -237,6 +263,13 @@ export class CrossingService {
         }).catch(() => {});
       }
 
+      // Emit cross:detected directly so the frontend gets real-time updates
+      // regardless of Redis/BullMQ availability
+      if (this.io) {
+        this.io.to(`user:${userId}`).emit('cross:detected', { encounterId: enc.encounterId });
+        this.io.to(`user:${otherId}`).emit('cross:detected', { encounterId: enc.encounterId });
+      }
+
       for (const cb of this.onCrossingCallbacks) {
         cb({
           user1Id: Math.min(userId, otherId),
@@ -255,12 +288,11 @@ export class CrossingService {
   private async enrichCrossEvent(
     userId: number,
     e: CrossEvent,
-    profileAccessibleOverride?: boolean,
   ): Promise<any> {
-    const isUnlocked = await this.isCrossUnlocked(userId, e);
-    if (!isUnlocked) return null;
+    const settings = await this.getUserSettings(userId);
+    const slotUnlockTime = this.computeSlotUnlockTime(e.crossedAt, settings.hour1, settings.hour2);
+    const isUnlocked = new Date() >= slotUnlockTime;
 
-    const profileAccessible = profileAccessibleOverride ?? await this.isProfileAccessible(userId);
     const otherId = e.user1Id === userId ? e.user2Id : e.user1Id;
     const other = await User.findByPk(otherId, {
       attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture', 'location'],
@@ -273,15 +305,13 @@ export class CrossingService {
         ],
       },
     }));
-    const showProfile = profileAccessible;
-    const settings = await this.getUserSettings(userId);
     return {
       id: e.id,
       other_user: other
         ? {
             id: other.id,
             username: other.username,
-            first_name: showProfile ? other.firstName : null,
+            first_name: isUnlocked ? other.firstName : null,
             last_name: other.lastName,
             profile_picture: other.profilePicture,
             location: other.location,
@@ -294,13 +324,13 @@ export class CrossingService {
       published: e.published,
       is_friend: isFriend,
       is_unlocked: isUnlocked,
-      profile_accessible: profileAccessible,
-      next_profile_unlock: !profileAccessible
-        ? (await this.getNextProfileUnlock(userId)).toISOString()
-        : null,
+      profile_accessible: isUnlocked,
+      next_profile_unlock: !isUnlocked ? slotUnlockTime.toISOString() : null,
+      reveal_schedule_hour_1: settings.hour1,
       reveal_schedule_hour_2: settings.hour2,
       reveal_delay_minutes: e.revealDelayMinutes || 0,
-      revealed_at: e.revealedAt?.toISOString() || null,
+      revealed_at: slotUnlockTime.toISOString(),
+      slot_unlock_at: slotUnlockTime.toISOString(),
     };
   }
 
@@ -309,35 +339,29 @@ export class CrossingService {
     limit: number = 50,
     hoursBack: number = 24
   ): Promise<any[]> {
-    const [events, profileAccessible] = await Promise.all([
-      CrossEvent.findAll({
-        where: {
-          [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
-          crossedAt: { [Op.gte]: new Date(Date.now() - hoursBack * 60 * 60 * 1000) },
-        },
-        order: [['crossed_at', 'DESC']],
-        limit,
-      }),
-      this.isProfileAccessible(userId),
-    ]);
-    const enriched = await Promise.all(events.map((e) => this.enrichCrossEvent(userId, e, profileAccessible)));
+    const events = await CrossEvent.findAll({
+      where: {
+        [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
+        crossedAt: { [Op.gte]: new Date(Date.now() - hoursBack * 60 * 60 * 1000) },
+      },
+      order: [['crossed_at', 'DESC']],
+      limit,
+    });
+    const enriched = await Promise.all(events.map((e) => this.enrichCrossEvent(userId, e)));
     return enriched.filter(Boolean);
   }
 
   async getEventsByDate(userId: number, dateStr: string): Promise<any[]> {
     const start = new Date(dateStr + 'T00:00:00.000Z');
     const end = new Date(dateStr + 'T23:59:59.999Z');
-    const [events, profileAccessible] = await Promise.all([
-      CrossEvent.findAll({
-        where: {
-          [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
-          crossedAt: { [Op.between]: [start, end] },
-        },
-        order: [['crossed_at', 'DESC']],
-      }),
-      this.isProfileAccessible(userId),
-    ]);
-    const enriched = await Promise.all(events.map((e) => this.enrichCrossEvent(userId, e, profileAccessible)));
+    const events = await CrossEvent.findAll({
+      where: {
+        [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
+        crossedAt: { [Op.between]: [start, end] },
+      },
+      order: [['crossed_at', 'DESC']],
+    });
+    const enriched = await Promise.all(events.map((e) => this.enrichCrossEvent(userId, e)));
     return enriched.filter(Boolean);
   }
 

@@ -9,7 +9,7 @@ import { Call } from '../models/Call';
 import { Friend } from '../models/Friend';
 import { AuthRequest, authenticate } from '../middleware/auth';
 import { getIO } from '../io';
-import { createAndDeliverNotification } from '../services/NotificationService';
+import { createAndDeliverNotification, sendExpoPush } from '../services/NotificationService';
 
 const router = Router();
 
@@ -259,16 +259,16 @@ router.post('/send/', authenticate, async (req: AuthRequest, res: Response) => {
   sio?.to(`user:${receiver_id}`).emit('message:new', msgData)
   sio?.to(`user:${receiver_id}`).emit('conversation:updated', { conversationId: conv.id })
 
-  // Create notification for the receiver
+  // Send push notification only — no DB notification record (not stored in notification page)
   const sender = req.user!
   const body = text ? (text.length > 100 ? text.slice(0, 100) + '...' : text) : 'Sent a message'
-  await createAndDeliverNotification({
-    userId: Number(receiver_id),
-    type: 'new_message',
-    title: `${sender.firstName} ${sender.lastName}`,
-    body,
-    actorId: sender.id,
-  });
+  const recipient = await User.findByPk(Number(receiver_id));
+  if (recipient?.expoPushToken && recipient.pushMessages) {
+    await sendExpoPush(recipient.expoPushToken, `${sender.firstName} ${sender.lastName}`, body, {
+      type: 'new_message',
+      senderId: sender.id,
+    }).catch(() => {});
+  }
 
   res.status(201).json(msgData);
 });

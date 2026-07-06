@@ -76,15 +76,15 @@ export class ProximityService {
       );
       const delayMap = new Map<number, number>();
       for (const s of settings) {
-        delayMap.set(s.user_id, s.reveal_delay_minutes || 30);
+        delayMap.set(s.user_id, s.reveal_delay_minutes ?? 30);
       }
-      const myDelay = delayMap.get(userId) || 30;
+      const myDelay = delayMap.get(userId) ?? 30;
 
       const hexCenter = H3Service.hexToCenter(hexId);
 
       for (const other of otherPresences) {
         const otherId = other.user_id;
-        const otherDelay = delayMap.get(otherId) || 30;
+        const otherDelay = delayMap.get(otherId) ?? 30;
 
         // Lexicographical sort for UNIQUE constraint
         const [userA, userB] = userId < otherId ? [userId, otherId] : [otherId, userId];
