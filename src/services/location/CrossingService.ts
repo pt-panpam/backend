@@ -10,6 +10,7 @@ import { Friend } from '../../models/Friend';
 import { createAndDeliverNotification } from '../NotificationService';
 import { Op } from 'sequelize';
 import { Server as SocketIOServer } from 'socket.io';
+import { getDatePartsInTimezone, createDateFromTz } from '../../utils/timezone';
 
 type CrossingCallback = (event: {
   user1Id: number;
@@ -42,15 +43,16 @@ export class CrossingService {
     this.onCrossingCallbacks.push(callback);
   }
 
-  async getUserSettings(userId: number): Promise<{ hour1: number; hour2: number; delayMinutes: number }> {
+  async getUserSettings(userId: number): Promise<{ hour1: number; hour2: number; delayMinutes: number; timezone: string }> {
     const settings = await CrossSettings.findOne({ where: { userId } });
     if (!settings) {
-      return { hour1: 9, hour2: 21, delayMinutes: 30 };
+      return { hour1: 9, hour2: 21, delayMinutes: 30, timezone: 'Asia/Kolkata' };
     }
     return {
       hour1: settings.revealScheduleHour1,
       hour2: settings.revealScheduleHour2,
       delayMinutes: settings.revealDelayMinutes ?? 30,
+      timezone: settings.timezone || 'Asia/Kolkata',
     };
   }
 
@@ -62,22 +64,31 @@ export class CrossingService {
    * - Crossed between Slots 1 & 2 → unlocks at Slot 2 (same day)
    * - Crossed after Slot 2   → unlocks at Slot 1 (next day)
    *
-   * All comparisons use local time to match the user's timezone.
+   * All comparisons use the user's timezone.
    */
-  private computeSlotUnlockTime(crossedAt: Date, hour1: number, hour2: number): Date {
-    const crossedMinutes = crossedAt.getHours() * 60 + crossedAt.getMinutes();
-    const unlockDate = new Date(crossedAt);
+  private computeSlotUnlockTime(crossedAt: Date, hour1: number, hour2: number, timezone: string): Date {
+    const parts = getDatePartsInTimezone(crossedAt, timezone);
+    const crossedMinutes = parts.hour * 60 + parts.minute;
+
+    let unlockYear = parts.year;
+    let unlockMonth = parts.month;
+    let unlockDay = parts.day;
+    let unlockHour: number;
 
     if (crossedMinutes < hour1 * 60) {
-      unlockDate.setHours(hour1, 0, 0, 0);
-    } else if (crossedMinutes >= hour1 * 60 && crossedMinutes < hour2 * 60) {
-      unlockDate.setHours(hour2, 0, 0, 0);
+      unlockHour = hour1;
+    } else if (crossedMinutes < hour2 * 60) {
+      unlockHour = hour2;
     } else {
-      unlockDate.setDate(unlockDate.getDate() + 1);
-      unlockDate.setHours(hour1, 0, 0, 0);
+      const nextDay = new Date(crossedAt.getTime() + 86400000);
+      const nextParts = getDatePartsInTimezone(nextDay, timezone);
+      unlockYear = nextParts.year;
+      unlockMonth = nextParts.month;
+      unlockDay = nextParts.day;
+      unlockHour = hour1;
     }
 
-    return unlockDate;
+    return createDateFromTz(unlockYear, unlockMonth, unlockDay, unlockHour, 0, 0, timezone);
   }
 
   /**
@@ -86,36 +97,35 @@ export class CrossingService {
    */
   async isCrossUnlocked(userId: number, event: CrossEvent): Promise<boolean> {
     const settings = await this.getUserSettings(userId);
-    const unlockTime = this.computeSlotUnlockTime(event.crossedAt, settings.hour1, settings.hour2);
+    const unlockTime = this.computeSlotUnlockTime(event.crossedAt, settings.hour1, settings.hour2, settings.timezone);
     return new Date() >= unlockTime;
   }
 
   /**
    * Full profile is accessible when the event's slot unlock time has passed.
-   * Previously also checked a reveal window (hour1-hour2), but now the
-   * slot-based unlock replaces both the cooling period and the window check.
    */
   async isProfileAccessible(userId: number, crossedAt?: Date): Promise<boolean> {
     if (!crossedAt) return false;
     const settings = await this.getUserSettings(userId);
-    const unlockTime = this.computeSlotUnlockTime(crossedAt, settings.hour1, settings.hour2);
+    const unlockTime = this.computeSlotUnlockTime(crossedAt, settings.hour1, settings.hour2, settings.timezone);
     return new Date() >= unlockTime;
   }
 
   async getNextProfileUnlock(userId: number): Promise<Date> {
     const settings = await this.getUserSettings(userId);
     const now = new Date();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const nowParts = getDatePartsInTimezone(now, settings.timezone);
+    const currentMinutes = nowParts.hour * 60 + nowParts.minute;
 
     if (currentMinutes < settings.hour1 * 60) {
-      const d = new Date(now);
-      d.setHours(settings.hour1, 0, 0, 0);
-      return d;
+      return createDateFromTz(nowParts.year, nowParts.month, nowParts.day, settings.hour1, 0, 0, settings.timezone);
     }
-    const d = new Date(now);
-    d.setDate(d.getDate() + 1);
-    d.setHours(settings.hour1, 0, 0, 0);
-    return d;
+    if (currentMinutes < settings.hour2 * 60) {
+      return createDateFromTz(nowParts.year, nowParts.month, nowParts.day, settings.hour2, 0, 0, settings.timezone);
+    }
+    const nextDay = new Date(now.getTime() + 86400000);
+    const nextParts = getDatePartsInTimezone(nextDay, settings.timezone);
+    return createDateFromTz(nextParts.year, nextParts.month, nextParts.day, settings.hour1, 0, 0, settings.timezone);
   }
 
   /**
@@ -290,7 +300,7 @@ export class CrossingService {
     e: CrossEvent,
   ): Promise<any> {
     const settings = await this.getUserSettings(userId);
-    const slotUnlockTime = this.computeSlotUnlockTime(e.crossedAt, settings.hour1, settings.hour2);
+    const slotUnlockTime = this.computeSlotUnlockTime(e.crossedAt, settings.hour1, settings.hour2, settings.timezone);
     const isUnlocked = new Date() >= slotUnlockTime;
 
     const otherId = e.user1Id === userId ? e.user2Id : e.user1Id;

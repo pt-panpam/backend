@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { pool } from './pgDb';
 import { H3Service } from './H3Service';
+import { SafeZoneService } from './SafeZoneService';
 
 interface NewEncounter {
   encounterId: string;
@@ -68,6 +69,14 @@ export class ProximityService {
         return { newEncounters: result };
       }
 
+      // Check if the entering user is in a safe zone (skip cross detection)
+      const safeZoneService = SafeZoneService.getInstance();
+      const enteringUserInSafeZone = await safeZoneService.isInSafeZone(userId, latitude, longitude);
+      if (enteringUserInSafeZone) {
+        await client.query('COMMIT');
+        return { newEncounters: result };
+      }
+
       // 4. Fetch reveal_delay_minutes for all involved users from cross_settings
       const allUserIds = [userId, ...otherPresences.map((p: any) => p.user_id)];
       const { rows: settings } = await client.query(
@@ -85,6 +94,10 @@ export class ProximityService {
       for (const other of otherPresences) {
         const otherId = other.user_id;
         const otherDelay = delayMap.get(otherId) ?? 30;
+
+        // Skip if the other user is in one of their safe zones
+        const otherInSafeZone = await safeZoneService.isInSafeZone(otherId, H3Service.hexToCenter(hexId).lat, H3Service.hexToCenter(hexId).lng);
+        if (otherInSafeZone) continue;
 
         // Lexicographical sort for UNIQUE constraint
         const [userA, userB] = userId < otherId ? [userId, otherId] : [otherId, userId];

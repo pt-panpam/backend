@@ -50,6 +50,13 @@ export async function initDatabase(): Promise<void> {
     'ALTER TABLE "cross_events" ADD COLUMN IF NOT EXISTS "reveal_delay_minutes" INTEGER DEFAULT 0;',
     'ALTER TABLE "cross_events" ADD COLUMN IF NOT EXISTS "revealed_at" TIMESTAMPTZ DEFAULT NULL;',
     'ALTER TABLE "cross_settings" ADD COLUMN IF NOT EXISTS "reveal_schedule_updated_at" TIMESTAMPTZ DEFAULT NULL;',
+    'ALTER TABLE "cross_settings" ADD COLUMN IF NOT EXISTS "timezone" VARCHAR(64) DEFAULT \'Asia/Kolkata\';',
+    'CREATE TABLE IF NOT EXISTS "safe_zones" ("id" SERIAL PRIMARY KEY, "user_id" INTEGER NOT NULL, "latitude" DOUBLE PRECISION NOT NULL, "longitude" DOUBLE PRECISION NOT NULL, "radius_km" DOUBLE PRECISION DEFAULT 5, "label" VARCHAR(255) DEFAULT \'\', "is_active" BOOLEAN DEFAULT true, "created_at" TIMESTAMPTZ DEFAULT NOW(), "updated_at" TIMESTAMPTZ DEFAULT NOW());',
+    'CREATE INDEX IF NOT EXISTS idx_safe_zones_user ON safe_zones(user_id);',
+    'CREATE TABLE IF NOT EXISTS "notes" ("id" SERIAL PRIMARY KEY, "user_id" INTEGER NOT NULL REFERENCES "users"("id") ON DELETE CASCADE, "text" TEXT NOT NULL, "latitude" DOUBLE PRECISION NOT NULL, "longitude" DOUBLE PRECISION NOT NULL, "discovery_radius_m" DOUBLE PRECISION DEFAULT 50, "published_at" TIMESTAMPTZ DEFAULT NULL, "upvote_count" INTEGER DEFAULT 0, "created_at" TIMESTAMPTZ DEFAULT NOW(), "updated_at" TIMESTAMPTZ DEFAULT NOW());',
+    'CREATE TABLE IF NOT EXISTS "note_votes" ("id" SERIAL PRIMARY KEY, "note_id" INTEGER NOT NULL REFERENCES "notes"("id") ON DELETE CASCADE, "user_id" INTEGER NOT NULL REFERENCES "users"("id") ON DELETE CASCADE, "created_at" TIMESTAMPTZ DEFAULT NOW(), "updated_at" TIMESTAMPTZ DEFAULT NOW());',
+    'CREATE INDEX IF NOT EXISTS idx_notes_published ON notes(published_at);',
+    'CREATE INDEX IF NOT EXISTS idx_note_votes_unique ON note_votes(note_id, user_id);',
   ];
   for (const sql of migrations) {
     try { await sequelize.query(sql); } catch (e: any) { console.warn('PG migration skipped:', e.message); }

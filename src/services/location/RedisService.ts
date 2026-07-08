@@ -128,6 +128,23 @@ export class RedisService {
     }
   }
 
+  async scanHexKeys(): Promise<string[]> {
+    if (!this.isAvailable()) return [];
+    try {
+      const keys: string[] = [];
+      let cursor = '0';
+      do {
+        const result = await this.client!.scan(cursor, 'MATCH', 'hex:*', 'COUNT', 100);
+        cursor = result[0];
+        keys.push(...result[1]);
+      } while (cursor !== '0');
+      return keys;
+    } catch (err) {
+      console.error('Redis scanHexKeys error:', err);
+      return [];
+    }
+  }
+
   /**
    * Store full-resolution route points in Redis with 24h TTL.
    * Used for route storage optimization — full-res data lives here,

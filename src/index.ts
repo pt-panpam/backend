@@ -19,10 +19,10 @@ import { CrossSettings } from './models/CrossSettings';
 import { Op } from 'sequelize';
 import { createAndDeliverNotification } from './services/NotificationService';
 import { StorageService } from './services/StorageService';
+import { getDatePartsInTimezone } from './utils/timezone';
 import { Post } from './models/Post';
 import { PostPhoto } from './models/PostPhoto';
 import { PostLike } from './models/PostLike';
-import { SavedPost } from './models/SavedPost';
 import { Comment } from './models/Comment';
 import { Notification } from './models/Notification';
 import { Message } from './models/Message';
@@ -35,6 +35,9 @@ import chatRoutes from './routes/chat';
 import notificationRoutes from './routes/notifications';
 import crossRoutes from './routes/crosses';
 import locationRoutes from './routes/location';
+import safeZoneRoutes from './routes/safezones';
+import noteRoutes from './routes/notes';
+import heatmapRoutes from './routes/heatmap';
 
 const app = express();
 const server = http.createServer(app);
@@ -52,6 +55,9 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/crosses', crossRoutes);
 app.use('/api/location', locationRoutes);
+app.use('/api/safe-zones', safeZoneRoutes);
+app.use('/api/notes', noteRoutes);
+app.use('/api/heatmap', heatmapRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -130,24 +136,23 @@ async function start() {
     let recapLastRun: string | null = null;
     setInterval(async () => {
       const now = new Date();
-      const currentMinute = now.getHours() * 60 + now.getMinutes();
-      const key = `${now.toISOString().split('T')[0]}-${currentMinute}`;
+      const key = `${now.toISOString().split('T')[0]}-${now.getUTCHours()}:${now.getUTCMinutes()}`;
       if (recapLastRun === key) return;
       recapLastRun = key;
 
       try {
         const crossService = CrossingService.getInstance();
-        const allSettings = await CrossSettings.findAll({ attributes: ['userId', 'revealScheduleHour1', 'revealScheduleHour2'] });
+        const allSettings = await CrossSettings.findAll({ attributes: ['userId', 'revealScheduleHour1', 'revealScheduleHour2', 'timezone'] });
 
-        // Also include users with no settings (default 9 and 21)
-        const defaultHours = [9, 21];
-        const userRecapMap = new Map<number, { hour1: number; hour2: number }>();
+        const userRecapMap = new Map<number, { hour1: number; hour2: number; timezone: string }>();
         for (const s of allSettings) {
-          userRecapMap.set(s.userId, { hour1: s.revealScheduleHour1, hour2: s.revealScheduleHour2 });
+          userRecapMap.set(s.userId, { hour1: s.revealScheduleHour1, hour2: s.revealScheduleHour2, timezone: s.timezone || 'Asia/Kolkata' });
         }
 
         const matchedUserIds = new Set<number>();
         for (const [userId, hours] of userRecapMap) {
+          const nowParts = getDatePartsInTimezone(now, hours.timezone);
+          const currentMinute = nowParts.hour * 60 + nowParts.minute;
           if (currentMinute === hours.hour1 * 60 || currentMinute === hours.hour2 * 60) {
             matchedUserIds.add(userId);
           }
@@ -155,7 +160,10 @@ async function start() {
 
         let notifiedCount = 0;
         for (const userId of matchedUserIds) {
-          const todayStr = now.toISOString().split('T')[0];
+          const settings = userRecapMap.get(userId)!;
+          const nowParts = getDatePartsInTimezone(now, settings.timezone);
+          const currentMinute = nowParts.hour * 60 + nowParts.minute;
+          const todayStr = `${nowParts.year}-${String(nowParts.month).padStart(2, '0')}-${String(nowParts.day).padStart(2, '0')}`;
           const period: 'am' | 'pm' = currentMinute < 12 * 60 ? 'am' : 'pm';
 
           try {
@@ -215,7 +223,6 @@ async function start() {
           await Notification.destroy({ where: { postId: post.id } });
           await PostLike.destroy({ where: { postId: post.id } });
           await Comment.destroy({ where: { postId: post.id } });
-          await SavedPost.destroy({ where: { postId: post.id } });
           await PostPhoto.destroy({ where: { postId: post.id } });
           await post.destroy();
         }

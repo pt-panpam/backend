@@ -8,7 +8,6 @@ import { Block, initBlock } from './Block';
 import { Post, initPost } from './Post';
 import { PostPhoto, initPostPhoto } from './PostPhoto';
 import { PostLike, initPostLike } from './PostLike';
-import { SavedPost, initSavedPost } from './SavedPost';
 import { Comment, initComment } from './Comment';
 import { Conversation, initConversation } from './Conversation';
 import { Message, initMessage } from './Message';
@@ -20,6 +19,9 @@ import { CrossEvent, initCrossEvent } from './CrossEvent';
 import { ProfileLike, initProfileLike } from './ProfileLike';
 import { Report, initReport } from './Report';
 import { Recap, initRecap } from './Recap';
+import { SafeZone, initSafeZone } from './SafeZone';
+import { Note, initNote } from './Note';
+import { NoteVote, initNoteVote } from './NoteVote';
 
 export function initModels(sequelize: Sequelize): void {
   initUser(sequelize);
@@ -31,7 +33,6 @@ export function initModels(sequelize: Sequelize): void {
   initPost(sequelize);
   initPostPhoto(sequelize);
   initPostLike(sequelize);
-  initSavedPost(sequelize);
   initComment(sequelize);
   initConversation(sequelize);
   initMessage(sequelize);
@@ -43,6 +44,9 @@ export function initModels(sequelize: Sequelize): void {
   initProfileLike(sequelize);
   initReport(sequelize);
   initRecap(sequelize);
+  initSafeZone(sequelize);
+  initNote(sequelize);
+  initNoteVote(sequelize);
 
   // Associations
   User.hasMany(Post, { foreignKey: 'userId', as: 'posts' });
@@ -53,9 +57,6 @@ export function initModels(sequelize: Sequelize): void {
 
   Post.hasMany(PostLike, { foreignKey: 'postId', as: 'likes' });
   PostLike.belongsTo(Post, { foreignKey: 'postId', as: 'post' });
-
-  Post.hasMany(SavedPost, { foreignKey: 'postId', as: 'saves' });
-  SavedPost.belongsTo(Post, { foreignKey: 'postId', as: 'post' });
 
   Post.hasMany(Comment, { foreignKey: 'postId', as: 'comments' });
   Comment.belongsTo(Post, { foreignKey: 'postId', as: 'post' });
@@ -94,6 +95,12 @@ export function initModels(sequelize: Sequelize): void {
   ProfileLike.belongsTo(User, { foreignKey: 'userId', as: 'user' });
   ProfileLike.belongsTo(User, { foreignKey: 'likedUserId', as: 'likedUser' });
   User.hasMany(ProfileLike, { foreignKey: 'likedUserId', as: 'profileLikes' });
+
+  Note.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+  User.hasMany(Note, { foreignKey: 'userId', as: 'notes' });
+  Note.hasMany(NoteVote, { foreignKey: 'noteId', as: 'votes' });
+  NoteVote.belongsTo(Note, { foreignKey: 'noteId', as: 'note' });
+  NoteVote.belongsTo(User, { foreignKey: 'userId', as: 'voter' });
 }
 
 export {
@@ -106,7 +113,6 @@ export {
   Post,
   PostPhoto,
   PostLike,
-  SavedPost,
   Comment,
   Conversation,
   Message,
@@ -118,4 +124,7 @@ export {
   ProfileLike,
   Report,
   Recap,
+  SafeZone,
+  Note,
+  NoteVote,
 };

@@ -24,6 +24,7 @@ router.get('/settings/', authenticate, async (req: AuthRequest, res: Response) =
     reveal_delay_minutes: settings.revealDelayMinutes || 30,
     reveal_schedule_updated_at: settings.revealScheduleUpdatedAt,
     can_change_recap_timing: settings.canChangeRecapTiming(),
+    timezone: settings.timezone || 'Asia/Kolkata',
   });
 });
 
@@ -58,6 +59,10 @@ router.patch('/settings/', authenticate, async (req: AuthRequest, res: Response)
     settings.revealDelayMinutes = req.body.reveal_delay_minutes;
   }
 
+  if (req.body.timezone !== undefined) {
+    settings.timezone = req.body.timezone;
+  }
+
   await settings.save();
   res.json({
     reveal_schedule_hour_1: settings.revealScheduleHour1,
@@ -65,6 +70,7 @@ router.patch('/settings/', authenticate, async (req: AuthRequest, res: Response)
     reveal_delay_minutes: settings.revealDelayMinutes || 30,
     reveal_schedule_updated_at: settings.revealScheduleUpdatedAt,
     can_change_recap_timing: settings.canChangeRecapTiming(),
+    timezone: settings.timezone || 'Asia/Kolkata',
   });
 });
 

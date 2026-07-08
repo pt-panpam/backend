@@ -4,7 +4,6 @@ import { User } from '../models/User';
 import { Post } from '../models/Post';
 import { PostPhoto } from '../models/PostPhoto';
 import { PostLike } from '../models/PostLike';
-import { SavedPost } from '../models/SavedPost';
 import { Comment } from '../models/Comment';
 import { Friend } from '../models/Friend';
 import { Notification } from '../models/Notification';
@@ -36,14 +35,11 @@ router.get('/feed/', authenticate, async (req: AuthRequest, res: Response) => {
     limit: pageSize,
   });
 
-  // Annotate with like/save status
   const postIds = rows.map(p => p.id);
   const userLikes = await PostLike.findAll({ where: { userId: req.user!.id, postId: { [Op.in]: postIds } } });
-  const savedPosts = await SavedPost.findAll({ where: { userId: req.user!.id, postId: { [Op.in]: postIds } } });
   const allLikes = await PostLike.findAll({ where: { postId: { [Op.in]: postIds } } });
 
   const likedMap = new Set(userLikes.map(l => l.postId));
-  const savedMap = new Set(savedPosts.map(s => s.postId));
   const countMap = new Map<number, number>();
   for (const l of allLikes) {
     countMap.set(l.postId, (countMap.get(l.postId) || 0) + 1);
@@ -53,7 +49,6 @@ router.get('/feed/', authenticate, async (req: AuthRequest, res: Response) => {
     const json = p.toJSON();
     json.likeCount = countMap.get(p.id) || 0;
     (json as any).hasLiked = likedMap.has(p.id);
-    (json as any).isSaved = savedMap.has(p.id);
     return serializePost(json, req.user!.id);
   });
 
@@ -70,24 +65,7 @@ router.get('/user/:id/', authenticate, async (req: AuthRequest, res: Response) =
     ],
     order: [['created_at', 'DESC']],
   });
-  res.json(posts.map(p => serializePost({ ...p.toJSON(), hasLiked: false, isSaved: false, likeCount: 0 }, req.user!.id)));
-});
-
-// Saved posts (must be before /:id/ to avoid matching "saved" as id)
-router.get('/saved/', authenticate, async (req: AuthRequest, res: Response) => {
-  const saved = await SavedPost.findAll({
-    where: { userId: req.user!.id },
-    include: [{
-      model: Post,
-      as: 'post',
-      include: [
-        { model: User, as: 'user', attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture'] },
-        { model: PostPhoto, as: 'photos' },
-      ],
-    }],
-    order: [['created_at', 'DESC']],
-  });
-  res.json({ results: saved.map(s => serializePost({ ...(s as any).post.toJSON(), hasLiked: false, isSaved: true, likeCount: 0 }, req.user!.id)) });
+  res.json(posts.map(p => serializePost({ ...p.toJSON(), hasLiked: false, likeCount: 0 }, req.user!.id)));
 });
 
 // Get single post
@@ -100,16 +78,14 @@ router.get('/:id/', authenticate, async (req: AuthRequest, res: Response) => {
   });
   if (!post) { res.status(404).json({ error: 'Post not found' }); return; }
   const hasLiked = !!(await PostLike.findOne({ where: { userId: req.user!.id, postId: post.id } }));
-  const isSaved = !!(await SavedPost.findOne({ where: { userId: req.user!.id, postId: post.id } }));
   const likeCount = await PostLike.count({ where: { postId: post.id } });
-  res.json(serializePost({ ...post.toJSON(), hasLiked, isSaved, likeCount }, req.user!.id));
+  res.json(serializePost({ ...post.toJSON(), hasLiked, likeCount }, req.user!.id));
 });
 
 // Create post
 router.post('/create/', authenticate, upload.single('uploaded_photos'), async (req: AuthRequest, res: Response) => {
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
   
-  // 🔴 FIX APPLIED HERE: Parse stringified coordinates into floats
   const parsedLatitude = req.body.latitude ? parseFloat(req.body.latitude) : null;
   const parsedLongitude = req.body.longitude ? parseFloat(req.body.longitude) : null;
 
@@ -145,7 +121,7 @@ router.post('/create/', authenticate, upload.single('uploaded_photos'), async (r
       { model: PostPhoto, as: 'photos' },
     ],
   });
-  res.status(201).json(serializePost({ ...full!.toJSON(), hasLiked: false, isSaved: false, likeCount: 0 }, req.user!.id));
+  res.status(201).json(serializePost({ ...full!.toJSON(), hasLiked: false, likeCount: 0 }, req.user!.id));
 });
 
 // Update post
@@ -165,9 +141,8 @@ router.patch('/:id/', authenticate, async (req: AuthRequest, res: Response) => {
     ],
   });
   const hasLiked = !!(await PostLike.findOne({ where: { userId: req.user!.id, postId: post.id } }));
-  const isSaved = !!(await SavedPost.findOne({ where: { userId: req.user!.id, postId: post.id } }));
   const likeCount = await PostLike.count({ where: { postId: post.id } });
-  res.json(serializePost({ ...full!.toJSON(), hasLiked, isSaved, likeCount }, req.user!.id));
+  res.json(serializePost({ ...full!.toJSON(), hasLiked, likeCount }, req.user!.id));
 });
 
 // Delete post
@@ -175,18 +150,15 @@ router.delete('/:id/', authenticate, async (req: AuthRequest, res: Response) => 
   const postId = Number(req.params.id);
   const post = await Post.findByPk(postId);
   if (!post || post.userId !== req.user!.id) { res.status(404).json({ error: 'Post not found' }); return; }
-  // Delete photos from R2
   const photos = await PostPhoto.findAll({ where: { postId } });
   for (const photo of photos) {
     if (StorageService.isR2Url(photo.image)) {
       await StorageService.deleteFile(photo.image);
     }
   }
-  // Cascade cleanup
   await Notification.destroy({ where: { postId } });
   await PostLike.destroy({ where: { postId } });
   await Comment.destroy({ where: { postId } });
-  await SavedPost.destroy({ where: { postId } });
   await PostPhoto.destroy({ where: { postId } });
   await post.destroy();
   res.status(204).send();
@@ -221,21 +193,6 @@ router.post('/:id/like/', authenticate, async (req: AuthRequest, res: Response) 
 router.delete('/:id/unlike/', authenticate, async (req: AuthRequest, res: Response) => {
   await PostLike.destroy({ where: { userId: req.user!.id, postId: Number(req.params.id) } } as any);
   res.json({ detail: 'Unliked' });
-});
-
-// Save post
-router.post('/:id/save/', authenticate, async (req: AuthRequest, res: Response) => {
-  await SavedPost.findOrCreate({
-    where: { userId: req.user!.id, postId: Number(req.params.id) } as any,
-    defaults: { userId: req.user!.id, postId: Number(req.params.id) } as any,
-  });
-  res.json({ detail: 'Saved' });
-});
-
-// Unsave post
-router.delete('/:id/unsave/', authenticate, async (req: AuthRequest, res: Response) => {
-  await SavedPost.destroy({ where: { userId: req.user!.id, postId: Number(req.params.id) } } as any);
-  res.json({ detail: 'Unsaved' });
 });
 
 // Comments
@@ -280,7 +237,6 @@ router.post('/:id/comments/', authenticate, async (req: AuthRequest, res: Respon
       postId: post.id,
     });
 
-    // Create message in chat with post context
     const allConvs = await Conversation.findAll({
       include: [{
         model: User,

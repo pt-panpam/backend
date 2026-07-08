@@ -7,6 +7,7 @@ export class CrossSettings extends Model {
   declare revealScheduleHour2: number;
   declare revealDelayMinutes: number;
   declare revealScheduleUpdatedAt: Date | null;
+  declare timezone: string;
 
   canChangeRecapTiming(): boolean {
     if (!this.revealScheduleUpdatedAt) return true;
@@ -23,5 +24,6 @@ export function initCrossSettings(sequelize: Sequelize): void {
     revealScheduleHour2: { type: DataTypes.INTEGER, defaultValue: 21, field: 'reveal_schedule_hour_2' },
     revealDelayMinutes: { type: DataTypes.INTEGER, defaultValue: 0, field: 'reveal_delay_minutes' },
     revealScheduleUpdatedAt: { type: DataTypes.DATE, allowNull: true, field: 'reveal_schedule_updated_at' },
+    timezone: { type: DataTypes.STRING, defaultValue: 'Asia/Kolkata', field: 'timezone' },
   }, { sequelize, tableName: 'cross_settings', timestamps: true, underscored: true });
 }
