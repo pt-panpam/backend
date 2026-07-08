@@ -1,5 +1,5 @@
 import { sequelize } from './config/database';
-import { initModels, User, Post, PostPhoto, PostLike, SavedPost, Comment, Friend, FriendRequest, Conversation, Message, ConversationReadStatus, Notification, Hobby, CrossEvent, CrossSettings, ProfileGallery, ProfileLike, Block, Call, Report, Recap } from './models';
+import { initModels, User, Post, PostPhoto, PostLike, Comment, Friend, FriendRequest, Conversation, Message, ConversationReadStatus, Notification, Hobby, CrossEvent, CrossSettings, ProfileGallery, ProfileLike, Block, Call, Report, Recap } from './models';
 import { hashPassword } from './utils/helpers';
 
 async function seed() {
@@ -425,18 +425,6 @@ async function seed() {
     } as any);
   }
   console.log('Created notifications with cross_recap');
-
-  // ── Saved Posts ──────────────────────────────────────────────
-  for (const post of posts) {
-    const savers = users.filter(u => u.id !== post.userId).slice(0, 1 + Math.floor(Math.random() * 2));
-    for (const saver of savers) {
-      await SavedPost.findOrCreate({
-        where: { userId: saver.id, postId: post.id } as any,
-        defaults: { userId: saver.id, postId: post.id } as any,
-      });
-    }
-  }
-  console.log('Created saved posts');
 
   // ── Profile Likes ────────────────────────────────────────────
   for (const user of users) {

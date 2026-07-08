@@ -97,7 +97,6 @@ export function serializePost(post: any, currentUserId?: number) {
     like_count: post.likeCount || 0,
     has_liked: post.hasLiked || false,
     is_expired: post.expiresAt ? new Date(post.expiresAt).getTime() <= Date.now() : false,
-    is_saved: post.isSaved || false,
     is_active: post.isActive,
     created_at: post.created_at,
     expires_at: post.expiresAt,

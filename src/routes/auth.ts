@@ -8,7 +8,7 @@ import { ProfileLike } from '../models/ProfileLike';
 import { Report } from '../models/Report';
 import { Post } from '../models/Post';
 import { PostLike } from '../models/PostLike';
-import { SavedPost } from '../models/SavedPost';
+
 import { Comment } from '../models/Comment';
 import { Message } from '../models/Message';
 import { ConversationReadStatus } from '../models/ConversationReadStatus';
@@ -244,7 +244,6 @@ router.delete('/user/delete/', authenticate, async (req: AuthRequest, res: Respo
   try {
     await Post.destroy({ where: { userId }, transaction: t });
     await PostLike.destroy({ where: { userId }, transaction: t });
-    await SavedPost.destroy({ where: { userId }, transaction: t });
     await Comment.destroy({ where: { userId }, transaction: t });
     await Message.destroy({ where: { senderId: userId }, transaction: t });
     await ConversationReadStatus.destroy({ where: { userId }, transaction: t });
