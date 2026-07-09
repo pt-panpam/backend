@@ -33,38 +33,62 @@ export function getNotificationQueue(): Queue {
 }
 
 function startConsumer(): void {
-  const worker = new Worker<{ encounterId: string; receiverId: number }>(
+  // Handler for old cross-notifications (encounter-based, from outbox worker)
+  const worker = new Worker<{ encounterId: string; receiverId: number } | { userId: number; otherUserId: number }>(
     'cross-notifications',
     async (job: Job) => {
-      const { encounterId, receiverId } = job.data;
+      if ('encounterId' in job.data) {
+        // Old-style encounter notification
+        const { encounterId, receiverId } = job.data;
+        const proximity = ProximityService.getInstance();
+        await proximity.markNotificationSent(encounterId, receiverId);
 
-      const proximity = ProximityService.getInstance();
+        const { rows } = await pool.query(
+          `SELECT crosser_id FROM encounter_notifications
+           WHERE encounter_id = $1 AND receiver_id = $2`,
+          [encounterId, receiverId],
+        );
+        if (rows.length === 0) return;
+        const crosserId = rows[0].crosser_id;
 
-      await proximity.markNotificationSent(encounterId, receiverId);
+        const crosser = await User.findByPk(crosserId, {
+          attributes: ['id', 'firstName'],
+        });
 
-      const { rows } = await pool.query(
-        `SELECT crosser_id FROM encounter_notifications
-         WHERE encounter_id = $1 AND receiver_id = $2`,
-        [encounterId, receiverId],
-      );
-      if (rows.length === 0) return;
-      const crosserId = rows[0].crosser_id;
+        await createAndDeliverNotification({
+          userId: receiverId,
+          type: 'cross_event',
+          title: 'Cross Paths',
+          body: `${crosser?.firstName || 'Someone'} crossed you earlier today`,
+          actorId: crosserId,
+        });
 
-      const crosser = await User.findByPk(crosserId, {
-        attributes: ['id', 'firstName'],
-      });
+        const io = getIO();
+        if (io) {
+          io.to(`user:${receiverId}`).emit('cross:detected', { encounterId });
+        }
+      } else {
+        // New-style unlock notification — fired at exact unlock time
+        const { userId, otherUserId } = job.data;
+        const other = await User.findByPk(otherUserId, {
+          attributes: ['id', 'firstName'],
+        });
+        const name = other?.firstName || 'Someone';
 
-      await createAndDeliverNotification({
-        userId: receiverId,
-        type: 'cross_event',
-        title: 'Cross Paths',
-        body: `${crosser?.firstName || 'Someone'} crossed you earlier today`,
-        actorId: crosserId,
-      });
+        await createAndDeliverNotification({
+          userId,
+          type: 'cross_recap',
+          title: 'Profile Revealed',
+          body: `${name}'s profile is now visible!`,
+          actorId: otherUserId,
+        });
 
-      const io = getIO();
-      if (io) {
-        io.to(`user:${receiverId}`).emit('cross:detected', { encounterId });
+        const io = getIO();
+        if (io) {
+          io.to(`user:${userId}`).emit('cross:recap-ready', {
+            timestamp: new Date().toISOString(),
+          });
+        }
       }
     },
     {
@@ -74,12 +98,16 @@ function startConsumer(): void {
   );
 
   worker.on('completed', (job) => {
-    console.log(`✅ Notification sent for encounter ${job.data.encounterId} → user ${job.data.receiverId}`);
+    const data = job.data as any;
+    const id = data.encounterId || data.userId;
+    console.log(`✅ Notification job completed: ${id}`);
   });
 
   worker.on('failed', (job, err) => {
     if (job) {
-      console.error(`❌ Notification failed for encounter ${job.data.encounterId}:`, err.message);
+      const data = job.data as any;
+      const id = data.encounterId || data.userId;
+      console.error(`❌ Notification job failed: ${id} - ${err.message}`);
     }
   });
 }

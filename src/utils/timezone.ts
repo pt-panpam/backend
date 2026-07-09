@@ -1,29 +1,26 @@
-export function getTzOffsetMinutes(date: Date, timezone: string): number {
-  const tzStr = date.toLocaleString('en-US', { timeZone: timezone });
-  const tzDate = new Date(tzStr);
-  return (tzDate.getTime() - date.getTime()) / 60000;
+const IST_OFFSET_MIN = 330; // +5:30
+
+export function getDatePartsInIST(date: Date) {
+  const ms = date.getTime() + IST_OFFSET_MIN * 60000;
+  const d = new Date(ms);
+  const utcY = d.getUTCFullYear();
+  const utcM = d.getUTCMonth() + 1;
+  const utcD = d.getUTCDate();
+  const utcH = d.getUTCHours();
+  const utcMin = d.getUTCMinutes();
+  const utcS = d.getUTCSeconds();
+  return { year: utcY, month: utcM, day: utcD, hour: utcH, minute: utcMin, second: utcS };
 }
 
-export function getDatePartsInTimezone(date: Date, timezone: string) {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  });
-  const parts = formatter.formatToParts(date);
-  const get = (type: string) => parseInt(parts.find(p => p.type === type)?.value || '0', 10);
-  return {
-    year: get('year'),
-    month: get('month'),
-    day: get('day'),
-    hour: get('hour'),
-    minute: get('minute'),
-    second: get('second'),
-  };
+export function istDateStr(date: Date): string {
+  const p = getDatePartsInIST(date);
+  return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
 }
 
-export function createDateFromTz(year: number, month: number, day: number, hour: number, minute: number, second: number, timezone: string): Date {
-  const utcDate = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  const offset = getTzOffsetMinutes(utcDate, timezone);
-  return new Date(utcDate.getTime() - offset * 60000);
+export function createDateFromIST(year: number, month: number, day: number, hour: number, minute: number, second: number): Date {
+  return new Date(Date.UTC(year, month - 1, day, hour - 5, minute - 30, second));
+}
+
+export function isSameISTDate(a: Date, b: Date): boolean {
+  return istDateStr(a) === istDateStr(b);
 }

@@ -9,6 +9,10 @@ export class CrossEvent extends Model {
   declare hexId: string;
   declare hexLatitude: number;
   declare hexLongitude: number;
+  declare crossDateIst: string;
+  declare userAUnlockTime: Date | null;
+  declare userBUnlockTime: Date | null;
+  declare lastSeenAt: Date | null;
   declare revealDelayMinutes: number;
   declare revealedAt: Date | null;
   declare crossedAt: Date;
@@ -28,6 +32,10 @@ export function initCrossEvent(sequelize: Sequelize): void {
     hexId: { type: DataTypes.STRING, field: 'hex_id' },
     hexLatitude: { type: DataTypes.FLOAT, field: 'hex_latitude' },
     hexLongitude: { type: DataTypes.FLOAT, field: 'hex_longitude' },
+    crossDateIst: { type: DataTypes.STRING(10), field: 'cross_date_ist' },
+    userAUnlockTime: { type: DataTypes.DATE, field: 'user_a_unlock_time' },
+    userBUnlockTime: { type: DataTypes.DATE, field: 'user_b_unlock_time' },
+    lastSeenAt: { type: DataTypes.DATE, field: 'last_seen_at' },
     revealDelayMinutes: { type: DataTypes.INTEGER, defaultValue: 0, field: 'reveal_delay_minutes' },
     revealedAt: { type: DataTypes.DATE, field: 'revealed_at' },
     crossedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW, field: 'crossed_at' },

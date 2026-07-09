@@ -269,12 +269,16 @@ async function seed() {
     const u1 = users[ct.user1Idx];
     const u2 = users[ct.user2Idx];
 
+    const userA = Math.min(u1.id, u2.id);
+    const userB = Math.max(u1.id, u2.id);
+    const crossDateStr = crossDate.toISOString().split('T')[0]; // Approximate; fine for seed
     await CrossEvent.create({
-      user1Id: Math.min(u1.id, u2.id),
-      user2Id: Math.max(u1.id, u2.id),
+      user1Id: userA,
+      user2Id: userB,
       latitude: (u1.latitude! + u2.latitude!) / 2,
       longitude: (u1.longitude! + u2.longitude!) / 2,
       crossedAt: crossDate,
+      crossDateIst: crossDateStr,
       published: true,
       notified: true,
     } as any);

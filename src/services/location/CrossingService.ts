@@ -7,10 +7,10 @@ import { CrossSettings } from '../../models/CrossSettings';
 import { Recap } from '../../models/Recap';
 import { User } from '../../models/User';
 import { Friend } from '../../models/Friend';
-import { createAndDeliverNotification } from '../NotificationService';
 import { Op } from 'sequelize';
 import { Server as SocketIOServer } from 'socket.io';
-import { getDatePartsInTimezone, createDateFromTz } from '../../utils/timezone';
+import { getDatePartsInIST, istDateStr, createDateFromIST } from '../../utils/timezone';
+import { getNotificationQueue } from './NotificationQueue';
 
 type CrossingCallback = (event: {
   user1Id: number;
@@ -43,89 +43,95 @@ export class CrossingService {
     this.onCrossingCallbacks.push(callback);
   }
 
-  async getUserSettings(userId: number): Promise<{ hour1: number; hour2: number; delayMinutes: number; timezone: string }> {
+  async getUserSettings(userId: number): Promise<{ hour1: number; hour2: number; delayMinutes: number }> {
     const settings = await CrossSettings.findOne({ where: { userId } });
     if (!settings) {
-      return { hour1: 9, hour2: 21, delayMinutes: 30, timezone: 'Asia/Kolkata' };
+      return { hour1: 9, hour2: 21, delayMinutes: 30 };
     }
     return {
       hour1: settings.revealScheduleHour1,
       hour2: settings.revealScheduleHour2,
       delayMinutes: settings.revealDelayMinutes ?? 30,
-      timezone: settings.timezone || 'Asia/Kolkata',
     };
   }
 
   /**
    * Compute when a cross event should unlock based on which recap slot
-   * the crossing time falls into.
+   * the crossing time falls into (IST only).
    *
-   * - Crossed before Slot 1  → unlocks at Slot 1 (same day)
-   * - Crossed between Slots 1 & 2 → unlocks at Slot 2 (same day)
-   * - Crossed after Slot 2   → unlocks at Slot 1 (next day)
-   *
-   * All comparisons use the user's timezone.
+   * Slot 1 (Short Wait): Crossings between 9:00 AM IST and 8:59 PM IST → Today at 9 PM IST
+   * Slot 2 (Long Wait):  Crossings between 9:00 PM IST and 8:59 AM IST → Tomorrow at 9 AM IST
    */
-  private computeSlotUnlockTime(crossedAt: Date, hour1: number, hour2: number, timezone: string): Date {
-    const parts = getDatePartsInTimezone(crossedAt, timezone);
+  private computeSlotUnlockTime(crossedAt: Date): Date {
+    const parts = getDatePartsInIST(crossedAt);
     const crossedMinutes = parts.hour * 60 + parts.minute;
-
-    let unlockYear = parts.year;
-    let unlockMonth = parts.month;
-    let unlockDay = parts.day;
-    let unlockHour: number;
-
-    if (crossedMinutes < hour1 * 60) {
-      unlockHour = hour1;
-    } else if (crossedMinutes < hour2 * 60) {
-      unlockHour = hour2;
-    } else {
-      const nextDay = new Date(crossedAt.getTime() + 86400000);
-      const nextParts = getDatePartsInTimezone(nextDay, timezone);
-      unlockYear = nextParts.year;
-      unlockMonth = nextParts.month;
-      unlockDay = nextParts.day;
-      unlockHour = hour1;
+    // Slot 1: 9AM–8:59PM → unlock at 9PM today
+    if (crossedMinutes >= 9 * 60 && crossedMinutes < 21 * 60) {
+      return createDateFromIST(parts.year, parts.month, parts.day, 21, 0, 0);
     }
-
-    return createDateFromTz(unlockYear, unlockMonth, unlockDay, unlockHour, 0, 0, timezone);
+    // Slot 2: 9PM–8:59AM → unlock at 9AM tomorrow (next IST day)
+    const tomorrow = new Date(crossedAt.getTime() + 86400000);
+    const tp = getDatePartsInIST(tomorrow);
+    return createDateFromIST(tp.year, tp.month, tp.day, 9, 0, 0);
   }
 
   /**
-   * Check if a cross event is unlocked based on which recap slot
-   * the crossing time falls into (viewer's schedule).
+   * Unified unlock formula: final = max(slotUnlockTime, crossedAt + delayMinutes).
+   * The returning user's delay dictates when the other side sees them.
+   */
+  private computeUnlockTime(crossedAt: Date, crosserDelayMinutes: number): Date {
+    const slotTime = this.computeSlotUnlockTime(crossedAt);
+    const delayTime = new Date(crossedAt.getTime() + crosserDelayMinutes * 60000);
+    return slotTime > delayTime ? slotTime : delayTime;
+  }
+
+  /**
+   * Check if a cross event is unlocked using the stored per-user unlock time.
+   * Falls back to computing if stored value is absent (old records).
    */
   async isCrossUnlocked(userId: number, event: CrossEvent): Promise<boolean> {
+    const isUserA = userId === event.user1Id;
+    const storedUnlock = isUserA ? event.userBUnlockTime : event.userAUnlockTime;
+    if (storedUnlock) {
+      return new Date() >= storedUnlock;
+    }
     const settings = await this.getUserSettings(userId);
-    const unlockTime = this.computeSlotUnlockTime(event.crossedAt, settings.hour1, settings.hour2, settings.timezone);
+    const crosserDelay = isUserA
+      ? await this.getUserDelay(event.user2Id)
+      : await this.getUserDelay(event.user1Id);
+    const unlockTime = this.computeUnlockTime(event.crossedAt, crosserDelay);
     return new Date() >= unlockTime;
   }
 
+  private async getUserDelay(userId: number): Promise<number> {
+    const s = await CrossSettings.findOne({ where: { userId }, attributes: ['revealDelayMinutes'] });
+    return s?.revealDelayMinutes ?? 30;
+  }
+
   /**
-   * Full profile is accessible when the event's slot unlock time has passed.
+   * Full profile is accessible when the event's unlock time has passed.
    */
   async isProfileAccessible(userId: number, crossedAt?: Date): Promise<boolean> {
     if (!crossedAt) return false;
     const settings = await this.getUserSettings(userId);
-    const unlockTime = this.computeSlotUnlockTime(crossedAt, settings.hour1, settings.hour2, settings.timezone);
+    const unlockTime = this.computeUnlockTime(crossedAt, settings.delayMinutes);
     return new Date() >= unlockTime;
   }
 
   async getNextProfileUnlock(userId: number): Promise<Date> {
-    const settings = await this.getUserSettings(userId);
     const now = new Date();
-    const nowParts = getDatePartsInTimezone(now, settings.timezone);
+    const nowParts = getDatePartsInIST(now);
     const currentMinutes = nowParts.hour * 60 + nowParts.minute;
 
-    if (currentMinutes < settings.hour1 * 60) {
-      return createDateFromTz(nowParts.year, nowParts.month, nowParts.day, settings.hour1, 0, 0, settings.timezone);
+    if (currentMinutes < 9 * 60) {
+      return createDateFromIST(nowParts.year, nowParts.month, nowParts.day, 9, 0, 0);
     }
-    if (currentMinutes < settings.hour2 * 60) {
-      return createDateFromTz(nowParts.year, nowParts.month, nowParts.day, settings.hour2, 0, 0, settings.timezone);
+    if (currentMinutes < 21 * 60) {
+      return createDateFromIST(nowParts.year, nowParts.month, nowParts.day, 21, 0, 0);
     }
-    const nextDay = new Date(now.getTime() + 86400000);
-    const nextParts = getDatePartsInTimezone(nextDay, settings.timezone);
-    return createDateFromTz(nextParts.year, nextParts.month, nextParts.day, settings.hour1, 0, 0, settings.timezone);
+    const tomorrow = new Date(createDateFromIST(nowParts.year, nowParts.month, nowParts.day, 21, 0, 0).getTime() + 1);
+    const nextParts = getDatePartsInIST(tomorrow);
+    return createDateFromIST(nextParts.year, nextParts.month, nextParts.day, 9, 0, 0);
   }
 
   /**
@@ -231,59 +237,67 @@ export class CrossingService {
       result.crossedWith.push(otherId);
       result.crossingDetected = true;
 
-      // Create CrossEvent for API backward compatibility
-      const otherSettings = await this.getUserSettings(otherId);
-      const delayMs = otherSettings.delayMinutes * 60 * 1000;
-      const revealedAt = new Date(timestamp.getTime() + delayMs);
+      // Daily debounce + daily unique constraint via crossDateIst
+      const userA = Math.min(userId, otherId);
+      const userB = Math.max(userId, otherId);
+      const cDate = istDateStr(timestamp);
+      const userADelay = await this.getUserDelay(userA);
+      const userBDelay = await this.getUserDelay(userB);
+      const userAUnlock = this.computeUnlockTime(timestamp, userADelay);
+      const userBUnlock = this.computeUnlockTime(timestamp, userBDelay);
 
       try {
-        await CrossEvent.findOrCreate({
-          where: {
-            user1Id: Math.min(userId, otherId),
-            user2Id: Math.max(userId, otherId),
-            hexId,
-            crossedAt: { [Op.gte]: new Date(timestamp.getTime() - 60000) },
-          },
+        const [evt, created] = await CrossEvent.findOrCreate({
+          where: { user1Id: userA, user2Id: userB, crossDateIst: cDate },
           defaults: {
-            user1Id: Math.min(userId, otherId),
-            user2Id: Math.max(userId, otherId),
+            user1Id: userA,
+            user2Id: userB,
             latitude,
             longitude,
             hexId,
             hexLatitude: hexCenter.lat,
             hexLongitude: hexCenter.lng,
-            revealDelayMinutes: otherSettings.delayMinutes,
-            revealedAt,
+            crossDateIst: cDate,
+            userAUnlockTime: userAUnlock,
+            userBUnlockTime: userBUnlock,
             crossedAt: timestamp,
+            revealDelayMinutes: userBDelay,
+            revealedAt: userBUnlock,
+            lastSeenAt: timestamp,
             published: false,
           } as any,
         });
+        if (!created) {
+          // Daily re-encounter — just update lastSeenAt, skip notifications
+          await evt.update({ lastSeenAt: timestamp }).catch(() => {});
+          continue;
+        }
       } catch {}
 
       if (route.isAvailable()) {
         await route.insertCrossingRoute({
-          user1Id: Math.min(userId, otherId),
-          user2Id: Math.max(userId, otherId),
+          user1Id: userA,
+          user2Id: userB,
           hexId,
-          lat1: userId === Math.min(userId, otherId) ? latitude : hexCenter.lat,
-          lng1: userId === Math.min(userId, otherId) ? longitude : hexCenter.lng,
-          lat2: userId === Math.max(userId, otherId) ? latitude : hexCenter.lat,
-          lng2: userId === Math.max(userId, otherId) ? longitude : hexCenter.lng,
+          lat1: userId === userA ? latitude : hexCenter.lat,
+          lng1: userId === userA ? longitude : hexCenter.lng,
+          lat2: userId === userB ? latitude : hexCenter.lat,
+          lng2: userId === userB ? longitude : hexCenter.lng,
           crossedAt: timestamp,
         }).catch(() => {});
       }
 
-      // Emit cross:detected directly so the frontend gets real-time updates
-      // regardless of Redis/BullMQ availability
-      if (this.io) {
-        this.io.to(`user:${userId}`).emit('cross:detected', { encounterId: enc.encounterId });
-        this.io.to(`user:${otherId}`).emit('cross:detected', { encounterId: enc.encounterId });
-      }
+      // Schedule two BullMQ jobs at the pre-computed unlock times
+      try {
+        const q = getNotificationQueue();
+        await q.add('unlock-profile', { userId: userB, otherUserId: userA }, { delay: Math.max(0, userAUnlock.getTime() - Date.now()), jobId: `unlock-${userB}-${userA}-${cDate}`, removeOnComplete: true });
+        await q.add('unlock-profile', { userId: userA, otherUserId: userB }, { delay: Math.max(0, userBUnlock.getTime() - Date.now()), jobId: `unlock-${userA}-${userB}-${cDate}`, removeOnComplete: true });
+      } catch {}
 
       for (const cb of this.onCrossingCallbacks) {
         cb({
-          user1Id: Math.min(userId, otherId),
-          user2Id: Math.max(userId, otherId),
+          user1Id: userA,
+          user2Id: userB,
           hexId,
           lat: latitude,
           lng: longitude,
@@ -299,9 +313,17 @@ export class CrossingService {
     userId: number,
     e: CrossEvent,
   ): Promise<any> {
-    const settings = await this.getUserSettings(userId);
-    const slotUnlockTime = this.computeSlotUnlockTime(e.crossedAt, settings.hour1, settings.hour2, settings.timezone);
-    const isUnlocked = new Date() >= slotUnlockTime;
+    const isMeUserA = userId === e.user1Id;
+    const storedUnlock = isMeUserA ? e.userBUnlockTime : e.userAUnlockTime;
+    let finalUnlock: Date;
+    if (storedUnlock) {
+      finalUnlock = storedUnlock;
+    } else {
+      const crosserId = isMeUserA ? e.user2Id : e.user1Id;
+      const crosserDelay = await this.getUserDelay(crosserId);
+      finalUnlock = this.computeUnlockTime(e.crossedAt, crosserDelay);
+    }
+    const isUnlocked = new Date() >= finalUnlock;
 
     const otherId = e.user1Id === userId ? e.user2Id : e.user1Id;
     const other = await User.findByPk(otherId, {
@@ -331,16 +353,17 @@ export class CrossingService {
       latitude: e.hexLatitude || e.latitude,
       longitude: e.hexLongitude || e.longitude,
       crossed_at: e.crossedAt,
+      cross_date_ist: e.crossDateIst,
       published: e.published,
       is_friend: isFriend,
       is_unlocked: isUnlocked,
       profile_accessible: isUnlocked,
-      next_profile_unlock: !isUnlocked ? slotUnlockTime.toISOString() : null,
-      reveal_schedule_hour_1: settings.hour1,
-      reveal_schedule_hour_2: settings.hour2,
+      next_profile_unlock: !isUnlocked ? finalUnlock.toISOString() : null,
+      reveal_schedule_hour_1: 9,
+      reveal_schedule_hour_2: 21,
       reveal_delay_minutes: e.revealDelayMinutes || 0,
-      revealed_at: slotUnlockTime.toISOString(),
-      slot_unlock_at: slotUnlockTime.toISOString(),
+      revealed_at: finalUnlock.toISOString(),
+      slot_unlock_at: finalUnlock.toISOString(),
     };
   }
 
@@ -362,12 +385,10 @@ export class CrossingService {
   }
 
   async getEventsByDate(userId: number, dateStr: string): Promise<any[]> {
-    const start = new Date(dateStr + 'T00:00:00.000Z');
-    const end = new Date(dateStr + 'T23:59:59.999Z');
     const events = await CrossEvent.findAll({
       where: {
         [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
-        crossedAt: { [Op.between]: [start, end] },
+        crossDateIst: dateStr,
       },
       order: [['crossed_at', 'DESC']],
     });
@@ -376,21 +397,18 @@ export class CrossingService {
   }
 
   async generateAndStoreRecap(userId: number, date: string, period: 'am' | 'pm'): Promise<void> {
-    const dayStart = new Date(date + 'T00:00:00.000Z');
-    const dayEnd = new Date(date + 'T23:59:59.999Z');
-
     const events = await CrossEvent.findAll({
       where: {
         [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
-        crossedAt: { [Op.between]: [dayStart, dayEnd] },
+        crossDateIst: date,
       },
     });
 
     let total = 0;
     let unlocked = 0;
     for (const e of events) {
+      total++;
       if (await this.isCrossUnlocked(userId, e)) {
-        total++;
         unlocked++;
       }
     }
@@ -427,12 +445,7 @@ export class CrossingService {
     const allEvents = await CrossEvent.findAll({
       where: {
         [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
-        crossedAt: {
-          [Op.between]: [
-            new Date(minDate + 'T00:00:00.000Z'),
-            new Date(maxDate + 'T23:59:59.999Z'),
-          ],
-        },
+        crossDateIst: { [Op.between]: [minDate, maxDate] },
       },
     });
 
@@ -596,7 +609,7 @@ export class CrossingService {
     const todayCrosses = await CrossEvent.count({
       where: {
         [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
-        crossedAt: { [Op.gte]: new Date(Date.now() - 86400000) },
+        crossDateIst: istDateStr(new Date()),
       },
     });
 

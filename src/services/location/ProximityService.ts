@@ -58,10 +58,11 @@ export class ProximityService {
         [timestamp, userId, hexId],
       );
 
-      // 3. Find other active presences in the same hex
+      // 3. Find active presences in current hex + 6 neighbors (gridDisk to solve hex boundary problem)
+      const searchHexes = H3Service.getNeighborHexes(hexId, 1); // [origin, ...6 neighbors]
       const { rows: otherPresences } = await client.query(
-        `SELECT id, user_id FROM presences WHERE hex_id = $1 AND left_at IS NULL AND user_id != $2`,
-        [hexId, userId],
+        `SELECT id, user_id FROM presences WHERE hex_id = ANY($1::varchar[]) AND left_at IS NULL AND user_id != $2`,
+        [searchHexes, userId],
       );
 
       if (otherPresences.length === 0) {

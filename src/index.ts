@@ -19,7 +19,7 @@ import { CrossSettings } from './models/CrossSettings';
 import { Op } from 'sequelize';
 import { createAndDeliverNotification } from './services/NotificationService';
 import { StorageService } from './services/StorageService';
-import { getDatePartsInTimezone } from './utils/timezone';
+import { getDatePartsInIST, istDateStr } from './utils/timezone';
 import { Post } from './models/Post';
 import { PostPhoto } from './models/PostPhoto';
 import { PostLike } from './models/PostLike';
@@ -132,73 +132,43 @@ async function start() {
       }).catch(() => {});
     }, 3600000);
 
-    // Recap worker — check every 60s for users whose recap time has passed
-    let recapLastRun: string | null = null;
+    // Recap worker — fires at exactly 03:30 UTC (9:00 AM IST) and 15:30 UTC (9:00 PM IST)
     setInterval(async () => {
       const now = new Date();
-      const key = `${now.toISOString().split('T')[0]}-${now.getUTCHours()}:${now.getUTCMinutes()}`;
-      if (recapLastRun === key) return;
-      recapLastRun = key;
+      const h = now.getUTCHours();
+      const m = now.getUTCMinutes();
+      // Trigger only at 03:30 or 15:30 UTC (within ±30s window)
+      if (!((h === 3 && m === 30) || (h === 15 && m === 30))) return;
 
       try {
         const crossService = CrossingService.getInstance();
-        const allSettings = await CrossSettings.findAll({ attributes: ['userId', 'revealScheduleHour1', 'revealScheduleHour2', 'timezone'] });
-
-        const userRecapMap = new Map<number, { hour1: number; hour2: number; timezone: string }>();
-        for (const s of allSettings) {
-          userRecapMap.set(s.userId, { hour1: s.revealScheduleHour1, hour2: s.revealScheduleHour2, timezone: s.timezone || 'Asia/Kolkata' });
-        }
-
-        const matchedUserIds = new Set<number>();
-        for (const [userId, hours] of userRecapMap) {
-          const nowParts = getDatePartsInTimezone(now, hours.timezone);
-          const currentMinute = nowParts.hour * 60 + nowParts.minute;
-          if (currentMinute === hours.hour1 * 60 || currentMinute === hours.hour2 * 60) {
-            matchedUserIds.add(userId);
-          }
-        }
+        const allUserIds = await CrossSettings.findAll({ attributes: ['userId'] });
+        const todayStr = istDateStr(now);
+        const period: 'am' | 'pm' = h < 12 ? 'am' : 'pm';
 
         let notifiedCount = 0;
-        for (const userId of matchedUserIds) {
-          const settings = userRecapMap.get(userId)!;
-          const nowParts = getDatePartsInTimezone(now, settings.timezone);
-          const currentMinute = nowParts.hour * 60 + nowParts.minute;
-          const todayStr = `${nowParts.year}-${String(nowParts.month).padStart(2, '0')}-${String(nowParts.day).padStart(2, '0')}`;
-          const period: 'am' | 'pm' = currentMinute < 12 * 60 ? 'am' : 'pm';
-
+        for (const s of allUserIds) {
           try {
-            await crossService.generateAndStoreRecap(userId, todayStr, period);
-          } catch {}
-
-          try {
+            await crossService.generateAndStoreRecap(s.userId, todayStr, period);
             await createAndDeliverNotification({
-              userId,
+              userId: s.userId,
               type: 'cross_recap',
               title: 'New Crosses Revealed',
-              body: `Your daily recap for ${todayStr} is ready!`,
-              actorId: userId,
+              body: `Your recap for ${todayStr} is ready!`,
+              actorId: s.userId,
             });
             notifiedCount++;
           } catch {}
-
-          try {
-            io.to(`user:${userId}`).emit('cross:recap-ready', {
-              date: todayStr,
-              timestamp: now.toISOString(),
-            });
-          } catch {}
         }
 
-        if (notifiedCount > 0) {
-          console.log(`✅ Recap worker notified ${notifiedCount} users`);
-        }
+        console.log(`✅ Recap worker notified ${notifiedCount} users at ${h}:${m} UTC`);
 
-        // At each user's recap time, also reset their route trail for a fresh start
-        for (const userId of matchedUserIds) {
+        // Reset route trails for a fresh start
+        const redis = RedisService.getInstance();
+        for (const s of allUserIds) {
           try {
-            const redis = RedisService.getInstance();
-            await redis.clearRoutePoints(userId).catch(() => {});
-            io.to(`user:${userId}`).emit('route:reset', { timestamp: now.toISOString() });
+            await redis.clearRoutePoints(s.userId).catch(() => {});
+            io.to(`user:${s.userId}`).emit('route:reset', { timestamp: now.toISOString() });
           } catch {}
         }
       } catch (err) {
