@@ -68,6 +68,14 @@ export class RedisService {
     return this.status === 'connected' && this.client !== null;
   }
 
+  getPubClient(): Redis | null {
+    return this.client;
+  }
+
+  getSubClient(): Redis | null {
+    return this.subscriber;
+  }
+
   async setUserLocation(userId: number, hexId: string): Promise<void> {
     if (!this.isAvailable()) return;
     try {

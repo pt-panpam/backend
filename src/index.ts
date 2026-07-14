@@ -14,19 +14,9 @@ import { CrossingService } from './services/location/CrossingService';
 import { runProximityMigrations } from './services/location/pgDb';
 import { startOutboxWorker } from './services/location/OutboxWorker';
 import { startNotificationQueue } from './services/location/NotificationQueue';
-import { CrossEvent } from './models/CrossEvent';
-import { CrossSettings } from './models/CrossSettings';
-import { Op } from 'sequelize';
-import { createAndDeliverNotification } from './services/NotificationService';
 import { StorageService } from './services/StorageService';
-import { getDatePartsInIST, istDateStr } from './utils/timezone';
-import { Post } from './models/Post';
-import { PostPhoto } from './models/PostPhoto';
-import { PostLike } from './models/PostLike';
-import { Comment } from './models/Comment';
-import { Notification } from './models/Notification';
-import { Message } from './models/Message';
-import { Conversation } from './models/Conversation';
+import rateLimit from 'express-rate-limit';
+import { RedisStore } from 'rate-limit-redis';
 
 import authRoutes from './routes/auth';
 import friendshipRoutes from './routes/friendship';
@@ -108,6 +98,38 @@ async function start() {
     const redis = RedisService.getInstance();
     await redis.connect();
 
+    // Rate limiters — backed by Redis so limits are shared across instances
+    const redisClient = redis.getPubClient()!;
+    const sendCommand = (...args: string[]) => redisClient.call(...(args as [string, ...string[]])) as any;
+
+    const globalLimiter = rateLimit({
+      windowMs: 60 * 1000,
+      max: 100,
+      standardHeaders: true,
+      legacyHeaders: false,
+      store: new RedisStore({ sendCommand, prefix: 'rl:global:' }),
+    });
+
+    const authLimiter = rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max: 20,
+      standardHeaders: true,
+      legacyHeaders: false,
+      store: new RedisStore({ sendCommand, prefix: 'rl:auth:' }),
+    });
+
+    const locationLimiter = rateLimit({
+      windowMs: 60 * 1000,
+      max: 30,
+      standardHeaders: true,
+      legacyHeaders: false,
+      store: new RedisStore({ sendCommand, prefix: 'rl:loc:' }),
+    });
+
+    app.use(globalLimiter);
+    app.use('/api/auth', authLimiter);
+    app.use('/api/location', locationLimiter);
+
     // Connect PostgreSQL/TimescaleDB
     const route = RouteService.getInstance();
     await route.connect();
@@ -123,87 +145,6 @@ async function start() {
 
     // Start BullMQ notification queue consumer
     startNotificationQueue();
-
-    // Cleanup old route points & cross events every hour (retention: 3 days)
-    setInterval(() => {
-      route.cleanupOldRoutes().catch(() => {});
-      CrossEvent.destroy({
-        where: { crossedAt: { [Op.lt]: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) } },
-      }).catch(() => {});
-    }, 3600000);
-
-    // Recap worker — fires at exactly 03:30 UTC (9:00 AM IST) and 15:30 UTC (9:00 PM IST)
-    setInterval(async () => {
-      const now = new Date();
-      const h = now.getUTCHours();
-      const m = now.getUTCMinutes();
-      // Trigger only at 03:30 or 15:30 UTC (within ±30s window)
-      if (!((h === 3 && m === 30) || (h === 15 && m === 30))) return;
-
-      try {
-        const crossService = CrossingService.getInstance();
-        const allUserIds = await CrossSettings.findAll({ attributes: ['userId'] });
-        const todayStr = istDateStr(now);
-        const period: 'am' | 'pm' = h < 12 ? 'am' : 'pm';
-
-        let notifiedCount = 0;
-        for (const s of allUserIds) {
-          try {
-            await crossService.generateAndStoreRecap(s.userId, todayStr, period);
-            await createAndDeliverNotification({
-              userId: s.userId,
-              type: 'cross_recap',
-              title: 'New Crosses Revealed',
-              body: `Your recap for ${todayStr} is ready!`,
-              actorId: s.userId,
-            });
-            notifiedCount++;
-          } catch {}
-        }
-
-        console.log(`✅ Recap worker notified ${notifiedCount} users at ${h}:${m} UTC`);
-
-        // Reset route trails for a fresh start
-        const redis = RedisService.getInstance();
-        for (const s of allUserIds) {
-          try {
-            await redis.clearRoutePoints(s.userId).catch(() => {});
-            io.to(`user:${s.userId}`).emit('route:reset', { timestamp: now.toISOString() });
-          } catch {}
-        }
-      } catch (err) {
-        console.error('❌ Recap worker error:', err);
-      }
-    }, 60000);
-
-    // Expired posts & chat media cleanup from R2 — every 10 minutes
-    setInterval(async () => {
-      try {
-        // 1. Expired posts — delete media from R2 then remove DB records
-        const expiredPosts = await Post.findAll({
-          where: { expiresAt: { [Op.lt]: new Date() } },
-        });
-        for (const post of expiredPosts) {
-          const photos = await PostPhoto.findAll({ where: { postId: post.id } });
-          for (const photo of photos) {
-            if (StorageService.isR2Url(photo.image)) {
-              await StorageService.deleteFile(photo.image);
-            }
-          }
-          await Notification.destroy({ where: { postId: post.id } });
-          await PostLike.destroy({ where: { postId: post.id } });
-          await Comment.destroy({ where: { postId: post.id } });
-          await PostPhoto.destroy({ where: { postId: post.id } });
-          await post.destroy();
-        }
-
-        if (expiredPosts.length > 0) {
-          console.log(`🧹 Cleaned up ${expiredPosts.length} expired posts from R2 & DB`);
-        }
-      } catch (err) {
-        console.error('🧹 Cleanup worker error:', err);
-      }
-    }, 600000);
 
     server.listen(env.PORT, '0.0.0.0', () => {
       console.log(`🚀 Node.js backend running on http://0.0.0.0:${env.PORT}`);

@@ -9,6 +9,9 @@ import { Post } from './models/Post';
 import { ConversationReadStatus } from './models/ConversationReadStatus';
 import { Friend } from './models/Friend';
 import { createAndDeliverNotification } from './services/NotificationService';
+import { findOneToOneConversation } from './utils/conversations';
+import { RedisService } from './services/location/RedisService';
+import { createAdapter } from '@socket.io/redis-adapter';
 
 interface AuthenticatedSocket extends Socket {
   userId?: number;
@@ -23,6 +26,15 @@ export function setupSocket(server: HTTPServer): Server {
       credentials: true,
     },
   });
+
+  // Redis adapter for horizontal scaling
+  const redis = RedisService.getInstance();
+  const pubClient = redis.getPubClient();
+  const subClient = redis.getSubClient();
+  if (pubClient && subClient) {
+    io.adapter(createAdapter(pubClient, subClient));
+    console.log('🔴 Socket.IO Redis adapter attached');
+  }
 
   // Track online users: userId -> Set<socketId>
   const onlineUsers = new Map<number, Set<string>>();
@@ -77,18 +89,7 @@ export function setupSocket(server: HTTPServer): Server {
 
         if (!convId && data.receiverId) {
           // Find or create conversation
-          const allConvs = await Conversation.findAll({
-            include: [{
-              model: User,
-              as: 'participants',
-              through: { attributes: [] },
-            }],
-          });
-          const existing = allConvs.find(c =>
-            (c as any).participants?.length === 2 &&
-            (c as any).participants?.some((p: any) => p.id === userId) &&
-            (c as any).participants?.some((p: any) => p.id === data.receiverId)
-          );
+          const existing = await findOneToOneConversation(userId, data.receiverId);
           if (existing) {
             convId = existing.id;
           } else {

@@ -10,6 +10,7 @@ import { Friend } from '../models/Friend';
 import { AuthRequest, authenticate } from '../middleware/auth';
 import { getIO } from '../io';
 import { createAndDeliverNotification, sendExpoPush } from '../services/NotificationService';
+import { findOneToOneConversation } from '../utils/conversations';
 
 const router = Router();
 
@@ -21,16 +22,12 @@ async function areFriends(userId: number, otherId: number): Promise<boolean> {
 // Unread message count across all conversations
 router.get('/unread-count/', authenticate, async (req: AuthRequest, res: Response) => {
   const userId = req.user!.id;
-  const convs = await Conversation.findAll({
-    include: [{
-      model: User,
-      as: 'participants',
-      through: { attributes: [] },
-    }],
+  const me = await User.findByPk(userId, {
+    include: [{ model: Conversation, as: 'conversations' }],
   });
+  const convs = (me as any)?.conversations ?? [];
   let totalUnread = 0;
   for (const c of convs) {
-    if (!(c as any).participants?.some((p: any) => p.id === userId)) continue;
     const lastMsg = await Message.findOne({ where: { conversationId: c.id }, order: [['created_at', 'DESC']] });
     if (!lastMsg) continue;
     const readStatus = await ConversationReadStatus.findOne({ where: { conversationId: c.id, userId } });
@@ -54,19 +51,23 @@ router.get('/debug/socket/', (_req, res) => {
 // List conversations
 router.get('/conversations/', authenticate, async (req: AuthRequest, res: Response) => {
   const userId = req.user!.id;
-  const convs = await Conversation.findAll({
+  const me = await User.findByPk(userId, {
     include: [{
-      model: User,
-      as: 'participants',
-      attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture'],
-      through: { attributes: [] },
+      model: Conversation,
+      as: 'conversations',
+      include: [{
+        model: User,
+        as: 'participants',
+        attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture'],
+        through: { attributes: [] },
+      }],
+      order: [['updated_at', 'DESC']],
     }],
-    order: [['updated_at', 'DESC']],
   });
+  const convs = (me as any)?.conversations ?? [];
 
   const results = await Promise.all(convs
-    .filter(c => (c as any).participants?.some((p: any) => p.id === userId))
-    .map(async c => {
+    .map(async (c: any) => {
       const lastMsg = await Message.findOne({ where: { conversationId: c.id }, order: [['created_at', 'DESC']] });
       const other = (c as any).participants?.find((p: any) => p.id !== userId);
       const readStatus = await ConversationReadStatus.findOne({ where: { conversationId: c.id, userId } });
@@ -107,18 +108,7 @@ router.post('/conversations/create/', authenticate, async (req: AuthRequest, res
   const { receiver_id } = req.body;
   if (!receiver_id) { res.status(400).json({ error: 'receiver_id required' }); return; }
 
-  const allConvs = await Conversation.findAll({
-    include: [{
-      model: User,
-      as: 'participants',
-      through: { attributes: [] },
-    }],
-  });
-  let conv = allConvs.find(c =>
-    (c as any).participants?.length === 2 &&
-    (c as any).participants?.some((p: any) => p.id === req.user!.id) &&
-    (c as any).participants?.some((p: any) => p.id === receiver_id)
-  );
+  let conv = await findOneToOneConversation(req.user!.id, receiver_id);
 
   if (!conv) {
     const friends = await areFriends(req.user!.id, receiver_id);
@@ -203,18 +193,7 @@ router.post('/send/', authenticate, async (req: AuthRequest, res: Response) => {
   if (!receiver_id) { res.status(400).json({ error: 'receiver_id required' }); return; }
 
   // Find existing conversation
-  const allConvs = await Conversation.findAll({
-    include: [{
-      model: User,
-      as: 'participants',
-      through: { attributes: [] },
-    }],
-  });
-  let conv = allConvs.find(c =>
-    (c as any).participants?.length === 2 &&
-    (c as any).participants?.some((p: any) => p.id === req.user!.id) &&
-    (c as any).participants?.some((p: any) => p.id === receiver_id)
-  );
+  let conv = await findOneToOneConversation(req.user!.id, receiver_id);
 
   if (!conv) {
     const friends = await areFriends(req.user!.id, receiver_id);

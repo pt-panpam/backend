@@ -4,24 +4,30 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:worker": "tsx watch src/worker.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:worker": "node dist/worker.js",
     "seed": "tsx src/seed.ts",
-    "create-accounts": "tsx src/create-accounts.ts"
+    "create-accounts": "tsx src/create-accounts.ts",
+    "add-abhi-messages": "tsx src/add-abhi-messages.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1079.0",
+    "@socket.io/redis-adapter": "^8.3.0",
     "bcryptjs": "^2.4.3",
     "bullmq": "^5.79.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.5.2",
     "google-auth-library": "^10.7.0",
     "h3-js": "^4.4.0",
     "ioredis": "^5.11.1",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "pg": "^8.21.0",
+    "rate-limit-redis": "^5.0.0",
     "sequelize": "^6.37.5",
     "socket.io": "^4.8.1",
     "uuid": "^11.1.0"

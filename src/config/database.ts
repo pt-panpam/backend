@@ -63,6 +63,8 @@ export async function initDatabase(): Promise<void> {
     'CREATE TABLE IF NOT EXISTS "note_votes" ("id" SERIAL PRIMARY KEY, "note_id" INTEGER NOT NULL REFERENCES "notes"("id") ON DELETE CASCADE, "user_id" INTEGER NOT NULL REFERENCES "users"("id") ON DELETE CASCADE, "created_at" TIMESTAMPTZ DEFAULT NOW(), "updated_at" TIMESTAMPTZ DEFAULT NOW());',
     'CREATE INDEX IF NOT EXISTS idx_notes_published ON notes(published_at);',
     'CREATE INDEX IF NOT EXISTS idx_note_votes_unique ON note_votes(note_id, user_id);',
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_participants_unique ON conversation_participants(conversation_id, user_id);',
+    'CREATE INDEX IF NOT EXISTS idx_conv_participants_user ON conversation_participants(user_id, conversation_id);',
   ];
   for (const sql of migrations) {
     try { await sequelize.query(sql); } catch (e: any) { console.warn('PG migration skipped:', e.message); }

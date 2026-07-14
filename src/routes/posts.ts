@@ -15,6 +15,7 @@ import { AuthRequest, authenticate } from '../middleware/auth';
 import { upload } from '../middleware/upload';
 import { serializePost } from '../utils/helpers';
 import { getIO } from '../io';
+import { findOneToOneConversation } from '../utils/conversations';
 
 const router = Router();
 
@@ -237,18 +238,7 @@ router.post('/:id/comments/', authenticate, async (req: AuthRequest, res: Respon
       postId: post.id,
     });
 
-    const allConvs = await Conversation.findAll({
-      include: [{
-        model: User,
-        as: 'participants',
-        through: { attributes: [] },
-      }],
-    });
-    let conv: any = allConvs.find(c =>
-      (c as any).participants?.length === 2 &&
-      (c as any).participants?.some((p: any) => p.id === req.user!.id) &&
-      (c as any).participants?.some((p: any) => p.id === post!.userId)
-    );
+    let conv: any = await findOneToOneConversation(req.user!.id, post!.userId);
     if (!conv) {
       conv = await Conversation.create() as any;
       if (conv) await (conv as any).setParticipants([req.user!.id, post!.userId]);
