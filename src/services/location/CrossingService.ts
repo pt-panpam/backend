@@ -253,22 +253,23 @@ export class CrossingService {
     
     const nowTime = Date.now();
     
-    // Privacy Level 0 Enforcer: If the delay hasn't passed, do not expose this event AT ALL.
-    const level1Time = new Date(e.crossedAt.getTime() + crosserDelay * 60000).getTime();
-    if (nowTime < level1Time) {
+    // Stage 0: If the delay hasn't passed, event is completely invisible
+    const partialRevealTime = new Date(e.crossedAt.getTime() + crosserDelay * 60000).getTime();
+    if (nowTime < partialRevealTime) {
       return null;
     }
 
+    // Stage 2: Full unlock time (slot-based: 9AM/9PM IST)
     const storedUnlock = isMeUserA ? e.userBUnlockTime : e.userAUnlockTime;
-    let finalUnlock: Date;
+    let fullUnlockTime: Date;
     if (storedUnlock) {
-      finalUnlock = storedUnlock;
+      fullUnlockTime = storedUnlock;
     } else {
-      finalUnlock = this.computeUnlockTime(e.crossedAt, crosserDelay);
+      fullUnlockTime = this.computeUnlockTime(e.crossedAt, crosserDelay);
     }
     
-    // Privacy Level 2 Check
-    const isUnlocked = nowTime >= finalUnlock.getTime();
+    const isFullyRevealed = nowTime >= fullUnlockTime.getTime();
+    const isPartiallyRevealed = !isFullyRevealed;
 
     const other = await User.findByPk(crosserId, {
       attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture', 'location'],
@@ -283,44 +284,45 @@ export class CrossingService {
       },
     }));
 
-    // Privacy Level 1 Data Masking (Network-Level Protection)
+    // Stage 1: Partially revealed — last name visible, blurred photo
     const maskedFirstName = other?.firstName ? `${other.firstName.charAt(0)}*` : 'Unknown';
-    const maskedLastName = other?.lastName ? `${other.lastName.charAt(0)}*` : '';
     
-    // Time Randomization
     const fuzzedTime = new Date(e.crossedAt);
-    fuzzedTime.setMinutes(0, 0, 0); // Round down to the hour
+    fuzzedTime.setMinutes(0, 0, 0);
     const fuzzedTimeStr = `Around ${fuzzedTime.getHours() % 12 || 12} ${fuzzedTime.getHours() >= 12 ? 'PM' : 'AM'}`;
 
     return {
       id: e.id,
       other_user: other
         ? {
-            id: other.id,
-            username: isUnlocked ? other.username : null,
-            first_name: isUnlocked ? other.firstName : maskedFirstName,
-            last_name: isUnlocked ? other.lastName : maskedLastName,
-            profile_picture: isUnlocked ? other.profilePicture : null, // Strict nullification of photo when locked
-            location: isUnlocked ? other.location : 'General Area',
+            id: isFullyRevealed ? other.id : null,
+            username: isFullyRevealed ? other.username : null,
+            first_name: isFullyRevealed ? other.firstName : maskedFirstName,
+            last_name: isFullyRevealed ? other.lastName : other.lastName,
+            profile_picture: isFullyRevealed
+              ? other.profilePicture
+              : other.profilePicture, // Return URL but frontend applies blur
+            blurred: isPartiallyRevealed,
+            location: isFullyRevealed ? other.location : 'General Area',
           }
         : null,
       hex_id: e.hexId,
-      // Location Minimization (snap to hex center if locked)
-      latitude: isUnlocked ? (e.latitude || e.hexLatitude) : e.hexLatitude,
-      longitude: isUnlocked ? (e.longitude || e.hexLongitude) : e.hexLongitude,
-      crossed_at: isUnlocked ? e.crossedAt : fuzzedTime,
-      fuzzed_time_str: !isUnlocked ? fuzzedTimeStr : null,
+      latitude: isFullyRevealed ? (e.latitude || e.hexLatitude) : e.hexLatitude,
+      longitude: isFullyRevealed ? (e.longitude || e.hexLongitude) : e.hexLongitude,
+      crossed_at: isFullyRevealed ? e.crossedAt : fuzzedTime,
+      fuzzed_time_str: isPartiallyRevealed ? fuzzedTimeStr : null,
       cross_date_ist: e.crossDateIst,
       published: e.published,
       is_friend: isFriend,
-      is_unlocked: isUnlocked,
-      profile_accessible: isUnlocked,
-      next_profile_unlock: !isUnlocked ? finalUnlock.toISOString() : null,
+      reveal_stage: isFullyRevealed ? 2 : 1,
+      is_unlocked: isFullyRevealed,
+      profile_accessible: isFullyRevealed,
+      next_profile_unlock: isFullyRevealed ? null : fullUnlockTime.toISOString(),
       reveal_schedule_hour_1: 9,
       reveal_schedule_hour_2: 21,
       reveal_delay_minutes: crosserDelay,
-      revealed_at: finalUnlock.toISOString(),
-      slot_unlock_at: finalUnlock.toISOString(),
+      revealed_at: fullUnlockTime.toISOString(),
+      slot_unlock_at: fullUnlockTime.toISOString(),
     };
   }
 

@@ -24,7 +24,7 @@ export async function initDatabase(): Promise<void> {
   await sequelize.sync({ alter: false });
   const migrations = [
     'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "is_live" BOOLEAN DEFAULT false;',
-    'ALTER TABLE "cross_settings" ADD COLUMN IF NOT EXISTS "reveal_delay_minutes" INTEGER DEFAULT 60;',
+    'ALTER TABLE "cross_settings" ADD COLUMN IF NOT EXISTS "reveal_delay_minutes" INTEGER DEFAULT 30;',
     'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "expo_push_token" VARCHAR(255) DEFAULT NULL;',
     'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "push_crosses" BOOLEAN DEFAULT true;',
     'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "looking_for" VARCHAR(30) DEFAULT \'\';',
