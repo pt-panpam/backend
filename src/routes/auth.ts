@@ -311,15 +311,8 @@ router.get('/users/', authenticate, async (req: AuthRequest, res: Response) => {
     },
     limit: 20,
   });
-  res.json(users.map(u => ({
-    id: u.id,
-    username: u.username,
-    first_name: u.firstName,
-    last_name: u.lastName,
-    profile_picture: u.profilePicture,
-    age: u.age,
-    location: u.location,
-  })));
+  const results = await Promise.all(users.map(u => serializeUser(u, req.user!.id)));
+  res.json(results);
 });
 
 // Update profile
@@ -359,17 +352,31 @@ router.patch('/user/profile/', authenticate, async (req: AuthRequest, res: Respo
 });
 
 // Account settings
-router.get('/user/account/', authenticate, (req: AuthRequest, res: Response) => {
-  const u = req.user!;
-  res.json({ first_name: u.firstName, last_name: u.lastName, username: u.username, email: u.email, phone_number: u.phoneNumber });
+router.get('/user/account/', authenticate, async (req: AuthRequest, res: Response) => {
+  const data = await serializeUser(req.user!, req.user!.id);
+  res.json(data);
 });
 router.patch('/user/account/', authenticate, async (req: AuthRequest, res: Response) => {
   const u = req.user!;
-  if (req.body.first_name !== undefined) u.firstName = req.body.first_name;
-  if (req.body.last_name !== undefined) u.lastName = req.body.last_name;
-  if (req.body.phone_number !== undefined) u.phoneNumber = req.body.phone_number;
-  await u.save();
-  res.json({ first_name: u.firstName, last_name: u.lastName, username: u.username, email: u.email, phone_number: u.phoneNumber });
+  const allowed = ['first_name', 'last_name', 'username', 'email', 'phone_number', 'location', 'sex', 'date_of_birth', 'looking_for', 'hobbies', 'bio', 'school', 'work', 'is_private', 'show_online_status', 'read_receipts', 'who_can_message', 'who_can_see_posts', 'story_visibility', 'friend_request_mode', 'theme', 'language', 'data_saver'];
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) {
+      const dbKey = key.replace(/_([a-z])/g, (_, l) => l.toUpperCase());
+      (u as any)[dbKey] = req.body[key];
+    }
+  }
+  try {
+    await u.save();
+  } catch (err: any) {
+    if (err?.name === 'SequelizeUniqueConstraintError' && err?.fields?.username) {
+      res.status(400).json({ error: 'username is already taken' });
+      return;
+    }
+    console.error('PATCH /user/account/ error:', err?.message || err);
+    res.status(500).json({ error: 'Failed to update account' });
+    return;
+  }
+  res.json(await serializeUser(u, u.id));
 });
 
 // Privacy settings

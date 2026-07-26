@@ -15,8 +15,6 @@ import { runProximityMigrations } from './services/location/pgDb';
 import { startOutboxWorker } from './services/location/OutboxWorker';
 import { startNotificationQueue } from './services/location/NotificationQueue';
 import { StorageService } from './services/StorageService';
-import rateLimit from 'express-rate-limit';
-import { RedisStore } from 'rate-limit-redis';
 
 import authRoutes from './routes/auth';
 import friendshipRoutes from './routes/friendship';
@@ -97,38 +95,6 @@ async function start() {
     // Connect Redis
     const redis = RedisService.getInstance();
     await redis.connect();
-
-    // Rate limiters — backed by Redis so limits are shared across instances
-    const redisClient = redis.getPubClient()!;
-    const sendCommand = (...args: string[]) => redisClient.call(...(args as [string, ...string[]])) as any;
-
-    const globalLimiter = rateLimit({
-      windowMs: 60 * 1000,
-      max: 100,
-      standardHeaders: true,
-      legacyHeaders: false,
-      store: new RedisStore({ sendCommand, prefix: 'rl:global:' }),
-    });
-
-    const authLimiter = rateLimit({
-      windowMs: 15 * 60 * 1000,
-      max: 20,
-      standardHeaders: true,
-      legacyHeaders: false,
-      store: new RedisStore({ sendCommand, prefix: 'rl:auth:' }),
-    });
-
-    const locationLimiter = rateLimit({
-      windowMs: 60 * 1000,
-      max: 30,
-      standardHeaders: true,
-      legacyHeaders: false,
-      store: new RedisStore({ sendCommand, prefix: 'rl:loc:' }),
-    });
-
-    app.use(globalLimiter);
-    app.use('/api/auth', authLimiter);
-    app.use('/api/location', locationLimiter);
 
     // Connect PostgreSQL/TimescaleDB
     const route = RouteService.getInstance();

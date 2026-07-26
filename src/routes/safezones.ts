@@ -30,7 +30,7 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response) => {
 });
 
 // Update a safe zone
-router.patch('/:id', authenticate, async (req: AuthRequest, res: Response) => {
+router.patch('/:id/', authenticate, async (req: AuthRequest, res: Response) => {
   const id = parseInt(req.params.id as string);
   if (isNaN(id)) {
     res.status(400).json({ error: 'Invalid id' });
@@ -53,7 +53,7 @@ router.patch('/:id', authenticate, async (req: AuthRequest, res: Response) => {
 });
 
 // Delete a safe zone
-router.delete('/:id', authenticate, async (req: AuthRequest, res: Response) => {
+router.delete('/:id/', authenticate, async (req: AuthRequest, res: Response) => {
   const id = parseInt(req.params.id as string);
   if (isNaN(id)) {
     res.status(400).json({ error: 'Invalid id' });

@@ -24,10 +24,10 @@ export async function comparePassword(password: string, hash: string): Promise<b
 
 export async function serializeUser(user: User, currentUserId?: number) {
   const [total_crosses, friend_count, is_friend, friend_request_status] = await Promise.all([
-    CrossEvent.count({ where: { [Op.or]: [{ user1Id: user.id }, { user2Id: user.id }], published: true } }),
-    Friend.count({ where: { [Op.or]: [{ userId: user.id }, { friendId: user.id }] } }),
-    currentUserId ? Friend.findOne({ where: { [Op.or]: [{ userId: currentUserId, friendId: user.id }, { userId: user.id, friendId: currentUserId }] } }).then(Boolean) : Promise.resolve(false),
-    currentUserId ? FriendRequest.findOne({ where: { [Op.or]: [{ fromUserId: currentUserId, toUserId: user.id }, { fromUserId: user.id, toUserId: currentUserId }], status: 'pending' } }).then((fr) => fr ? (fr.fromUserId === currentUserId ? 'sent' : 'received') : null) : Promise.resolve(null),
+    CrossEvent.count({ where: { [Op.or]: [{ user1Id: user.id }, { user2Id: user.id }] } }).catch(() => 0),
+    Friend.count({ where: { [Op.or]: [{ userId: user.id }, { friendId: user.id }] } }).catch(() => 0),
+    currentUserId ? Friend.findOne({ where: { [Op.or]: [{ userId: currentUserId, friendId: user.id }, { userId: user.id, friendId: currentUserId }] } }).then(Boolean).catch(() => false) : Promise.resolve(false),
+    currentUserId ? FriendRequest.findOne({ where: { [Op.or]: [{ fromUserId: currentUserId, toUserId: user.id }, { fromUserId: user.id, toUserId: currentUserId }], status: 'pending' } }).then((fr) => fr ? (fr.fromUserId === currentUserId ? 'sent' : 'received') : null).catch(() => null) : Promise.resolve(null),
   ]);
   return {
     id: user.id,

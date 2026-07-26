@@ -47,37 +47,49 @@ async function startWorker() {
       }).catch(() => {});
     }, 3600000);
 
-    // 2. Recap worker — fires at exactly 03:30 UTC (9:00 AM IST) and 15:30 UTC (9:00 PM IST)
+    // 2. Recap worker — fires every minute, unlocks crossings whose recapSlotTime has passed
+    //    At 9AM IST (03:30 UTC) and 9PM IST (15:30 UTC) it also sends recap notifications
+    let lastNotifiedPeriod: string | null = null;
     setInterval(async () => {
-      const now = new Date();
-      const h = now.getUTCHours();
-      const m = now.getUTCMinutes();
-      if (!((h === 3 && m === 30) || (h === 15 && m === 30))) return;
-
       try {
         const crossService = CrossingService.getInstance();
-        const allUserIds = await CrossSettings.findAll({ attributes: ['userId'] });
+        const allUsers = await CrossSettings.findAll({ attributes: ['userId'] });
+        const now = new Date();
         const todayStr = istDateStr(now);
-        const period: 'am' | 'pm' = h < 12 ? 'am' : 'pm';
+        const h = now.getUTCHours();
+        const m = now.getUTCMinutes();
+
+        // Determine if this is a recap window (within 1 minute of 03:30 or 15:30 UTC)
+        const isRecapWindow =
+          (h === 3 && m === 30) ||
+          (h === 15 && m === 30);
+        const currentPeriod: 'am' | 'pm' = h < 12 ? 'am' : 'pm';
+        const periodKey = `${todayStr}-${currentPeriod}`;
 
         let notifiedCount = 0;
-        for (const s of allUserIds) {
+        for (const s of allUsers) {
           try {
-            await crossService.generateAndStoreRecap(s.userId, todayStr, period);
-            await createAndDeliverNotification({
-              userId: s.userId,
-              type: 'cross_recap',
-              title: 'New Crosses Revealed',
-              body: `Your recap for ${todayStr} is ready!`,
-              actorId: s.userId,
-            });
-            notifiedCount++;
+            const result = await crossService.generateAndStoreRecap(s.userId, todayStr, currentPeriod);
+
+            if (isRecapWindow && lastNotifiedPeriod !== periodKey && result.events_processed > 0) {
+              await createAndDeliverNotification({
+                userId: s.userId,
+                type: 'cross_recap',
+                title: 'New Crosses Revealed',
+                body: `Your recap for ${todayStr} is ready!`,
+                actorId: s.userId,
+              });
+              notifiedCount++;
+            }
           } catch {}
         }
 
-        console.log(`✅ Recap worker notified ${notifiedCount} users at ${h}:${m} UTC`);
+        if (isRecapWindow && lastNotifiedPeriod !== periodKey) {
+          lastNotifiedPeriod = periodKey;
+          console.log(`✅ Recap worker notified ${notifiedCount} users at ${h}:${m} UTC`);
+        }
 
-        for (const s of allUserIds) {
+        for (const s of allUsers) {
           await redis.clearRoutePoints(s.userId).catch(() => {});
         }
       } catch (err) {

@@ -1,9 +1,8 @@
 import { Queue, Worker, Job } from 'bullmq';
 import { env } from '../../config/env';
 import { User } from '../../models/User';
+import { CrossEvent } from '../../models/CrossEvent';
 import { createAndDeliverNotification } from '../NotificationService';
-import { ProximityService } from './ProximityService';
-import { pool } from './pgDb';
 import { getIO } from '../../io';
 
 function getConnectionOpts() {
@@ -23,96 +22,60 @@ export function getNotificationQueue(): Queue {
   if (!queue) {
     queue = new Queue('cross-notifications', {
       connection: getConnectionOpts(),
-      defaultJobOptions: {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5000 },
-      },
+      defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
     });
   }
   return queue;
 }
 
-function startConsumer(): void {
-  // Handler for old cross-notifications (encounter-based, from outbox worker)
-  const worker = new Worker<{ encounterId: string; receiverId: number } | { userId: number; otherUserId: number }>(
+export function startNotificationQueue(): void {
+  const worker = new Worker(
     'cross-notifications',
     async (job: Job) => {
-      if ('encounterId' in job.data) {
-        // Old-style encounter notification
-        const { encounterId, receiverId } = job.data;
-        const proximity = ProximityService.getInstance();
-        await proximity.markNotificationSent(encounterId, receiverId);
+      if (job.name === 'send-crossing-push') {
+        const { eventId, userA, userB } = job.data;
+        
+        // 1. Verify Event and mark as Notified
+        const event = await CrossEvent.findByPk(eventId);
+        if (!event || event.notified) return;
+        await event.update({ notified: true });
 
-        const { rows } = await pool.query(
-          `SELECT crosser_id FROM encounter_notifications
-           WHERE encounter_id = $1 AND receiver_id = $2`,
-          [encounterId, receiverId],
-        );
-        if (rows.length === 0) return;
-        const crosserId = rows[0].crosser_id;
+        // 2. Fetch Users
+        const uA = await User.findByPk(userA, { attributes: ['id', 'lastName'] });
+        const uB = await User.findByPk(userB, { attributes: ['id', 'lastName'] });
+        if (!uA || !uB) return;
 
-        const crosser = await User.findByPk(crosserId, {
-          attributes: ['id', 'firstName'],
-        });
-
+        // 3. Deliver Anonymous Push Notifications
+        // Rule: Never reveal identity, time, or location.
         await createAndDeliverNotification({
-          userId: receiverId,
+          userId: userA,
           type: 'cross_event',
-          title: 'Cross Paths',
-          body: `${crosser?.firstName || 'Someone'} crossed you earlier today`,
-          actorId: crosserId,
+          title: 'Paths Crossed',
+          body: `Someone crossed your path. Open the app to find out who.`,
+          actorId: userB,
         });
-
-        const io = getIO();
-        if (io) {
-          io.to(`user:${receiverId}`).emit('cross:detected', { encounterId });
-        }
-      } else {
-        // New-style unlock notification — fired at exact unlock time
-        const { userId, otherUserId } = job.data;
-        const other = await User.findByPk(otherUserId, {
-          attributes: ['id', 'firstName'],
-        });
-        const name = other?.firstName || 'Someone';
 
         await createAndDeliverNotification({
-          userId,
-          type: 'cross_recap',
-          title: 'Profile Revealed',
-          body: `${name}'s profile is now visible!`,
-          actorId: otherUserId,
+          userId: userB,
+          type: 'cross_event',
+          title: 'Paths Crossed',
+          body: `Someone crossed your path. Open the app to find out who.`,
+          actorId: userA,
         });
 
+        // 4. Trigger Socket Updates (Client fetches new sanitized list)
         const io = getIO();
         if (io) {
-          io.to(`user:${userId}`).emit('cross:recap-ready', {
-            timestamp: new Date().toISOString(),
-          });
+          io.to(`user:${userA}`).emit('cross:detected', { eventId });
+          io.to(`user:${userB}`).emit('cross:detected', { eventId });
         }
       }
     },
-    {
-      connection: getConnectionOpts(),
-      concurrency: 10,
-    },
+    { connection: getConnectionOpts(), concurrency: 10 }
   );
 
-  worker.on('completed', (job) => {
-    const data = job.data as any;
-    const id = data.encounterId || data.userId;
-    console.log(`✅ Notification job completed: ${id}`);
-  });
-
-  worker.on('failed', (job, err) => {
-    if (job) {
-      const data = job.data as any;
-      const id = data.encounterId || data.userId;
-      console.error(`❌ Notification job failed: ${id} - ${err.message}`);
-    }
-  });
-}
-
-export function startNotificationQueue(): void {
-  startConsumer();
-  console.log('🔔 Notification queue consumer started');
+  worker.on('completed', (job) => console.log(`✅ Notification job completed: ${job.id}`));
+  worker.on('failed', (job, err) => console.error(`❌ Notification job failed: ${job?.id} - ${err.message}`));
+  
+  console.log('🔔 Privacy-First Notification queue consumer started');
 }
