@@ -21,7 +21,7 @@ export function initCrossSettings(sequelize: Sequelize): void {
     userId: { type: DataTypes.INTEGER, allowNull: false, unique: true, field: 'user_id' },
     revealScheduleHour1: { type: DataTypes.INTEGER, defaultValue: 9, field: 'reveal_schedule_hour_1' },
     revealScheduleHour2: { type: DataTypes.INTEGER, defaultValue: 21, field: 'reveal_schedule_hour_2' },
-    revealDelayMinutes: { type: DataTypes.INTEGER, defaultValue: 30, field: 'reveal_delay_minutes' },
+    revealDelayMinutes: { type: DataTypes.INTEGER, defaultValue: 45, field: 'reveal_delay_minutes' },
     revealScheduleUpdatedAt: { type: DataTypes.DATE, allowNull: true, field: 'reveal_schedule_updated_at' },
   }, { sequelize, tableName: 'cross_settings', timestamps: true, underscored: true });
 }

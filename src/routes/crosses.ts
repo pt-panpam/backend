@@ -6,6 +6,8 @@ import { CrossEvent } from '../models/CrossEvent';
 import { Friend } from '../models/Friend';
 import { AuthRequest, authenticate } from '../middleware/auth';
 import { CrossingService } from '../services/location/CrossingService';
+import { H3Service } from '../services/location/H3Service';
+import { istDateStr } from '../utils/timezone';
 
 const router = Router();
 
@@ -21,7 +23,7 @@ router.get('/settings/', authenticate, async (req: AuthRequest, res: Response) =
   res.json({
     reveal_schedule_hour_1: settings.revealScheduleHour1,
     reveal_schedule_hour_2: settings.revealScheduleHour2,
-    reveal_delay_minutes: settings.revealDelayMinutes ?? 30,
+    reveal_delay_minutes: settings.revealDelayMinutes ?? 45,
     reveal_schedule_updated_at: settings.revealScheduleUpdatedAt,
     can_change_recap_timing: settings.canChangeRecapTiming(),
   });
@@ -62,7 +64,7 @@ router.patch('/settings/', authenticate, async (req: AuthRequest, res: Response)
   res.json({
     reveal_schedule_hour_1: settings.revealScheduleHour1,
     reveal_schedule_hour_2: settings.revealScheduleHour2,
-    reveal_delay_minutes: settings.revealDelayMinutes ?? 30,
+    reveal_delay_minutes: settings.revealDelayMinutes ?? 45,
     reveal_schedule_updated_at: settings.revealScheduleUpdatedAt,
     can_change_recap_timing: settings.canChangeRecapTiming(),
   });
@@ -114,12 +116,19 @@ router.post('/report/', authenticate, async (req: AuthRequest, res: Response) =>
     res.status(400).json({ error: 'user_id, latitude, and longitude required' });
     return;
   }
+  const now = new Date();
   const event = await CrossEvent.create({
     user1Id: req.user!.id,
     user2Id: user_id,
-    latitude,
-    longitude,
+    hexId: H3Service.latLngToHex(latitude, longitude),
+    crossDateIst: istDateStr(now),
+    crossedAt: now,
+    revealTimeA: now,
+    revealTimeB: now,
+    notificationTime: now,
+    recapSlotTime: now,
     published: true,
+    notified: true,
   } as any);
   res.status(201).json({ id: event.id, detail: 'Cross reported' });
 });

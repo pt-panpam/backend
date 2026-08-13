@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import http from 'http';
 import https from 'https';
+import { Op } from 'sequelize';
 import { env } from './config/env';
 import { sequelize, initDatabase } from './config/database';
 import { initModels } from './models';
@@ -15,6 +16,7 @@ import { runProximityMigrations } from './services/location/pgDb';
 import { startOutboxWorker } from './services/location/OutboxWorker';
 import { startNotificationQueue } from './services/location/NotificationQueue';
 import { StorageService } from './services/StorageService';
+import { CrossEvent } from './models/CrossEvent';
 
 import authRoutes from './routes/auth';
 import friendshipRoutes from './routes/friendship';
@@ -111,6 +113,24 @@ async function start() {
 
     // Start BullMQ notification queue consumer
     startNotificationQueue();
+
+    setInterval(async () => {
+      try {
+        const now = new Date();
+        const windowStart = new Date(now.getTime() - 90 * 1000);
+        const unlocked = await CrossEvent.findAll({
+          where: {
+            notified: true,
+            recapSlotTime: { [Op.gte]: windowStart, [Op.lte]: now },
+          },
+          attributes: ['id', 'user1Id', 'user2Id'],
+        });
+        for (const e of unlocked) {
+          io.to(`user:${e.user1Id}`).emit('cross:unlocked', { eventId: e.id });
+          io.to(`user:${e.user2Id}`).emit('cross:unlocked', { eventId: e.id });
+        }
+      } catch {}
+    }, 60000);
 
     server.listen(env.PORT, '0.0.0.0', () => {
       console.log(`🚀 Node.js backend running on http://0.0.0.0:${env.PORT}`);

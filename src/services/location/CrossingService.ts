@@ -4,11 +4,12 @@ import { CrossSettings } from '../../models/CrossSettings';
 import { User } from '../../models/User';
 import { Friend } from '../../models/Friend';
 import { Op } from 'sequelize';
-import { getDatePartsInIST, istDateStr } from '../../utils/timezone';
+import { getDatePartsInIST, istDateStr, createDateFromIST } from '../../utils/timezone';
 import { getNotificationQueue } from './NotificationQueue';
 import { ProximityService, ValidEncounter } from './ProximityService';
 import { H3Service } from './H3Service';
 import { RouteService } from './RouteService';
+import { pool } from './pgDb';
 
 export class CrossingService {
   private static instance: CrossingService;
@@ -45,12 +46,12 @@ export class CrossingService {
     const crossedMinutes = parts.hour * 60 + parts.minute;
 
     if (crossedMinutes < hour1 * 60) {
-      return new Date(parts.year, parts.month - 1, parts.day, hour1, 0, 0);
+      return createDateFromIST(parts.year, parts.month, parts.day, hour1, 0, 0);
     }
     if (crossedMinutes >= hour1 * 60 && crossedMinutes < hour2 * 60) {
-      return new Date(parts.year, parts.month - 1, parts.day, hour2, 0, 0);
+      return createDateFromIST(parts.year, parts.month, parts.day, hour2, 0, 0);
     }
-    return new Date(parts.year, parts.month - 1, parts.day + 1, hour1, 0, 0);
+    return createDateFromIST(parts.year, parts.month, parts.day + 1, hour1, 0, 0);
   }
 
   static getFuzzedTimeStr(date: Date): string {
@@ -138,14 +139,23 @@ export class CrossingService {
           const q = getNotificationQueue();
           const delayMs = Math.max(0, notificationTime.getTime() - Date.now());
 
-          await q.add('send-crossing-push',
-            { eventId: event.id, userA: enc.userA, userB: enc.userB },
-            {
-              delay: delayMs,
-              jobId: `cross-push-${event.id}`,
-              removeOnComplete: true
-            }
-          );
+          try {
+            await q.add('send-crossing-push',
+              { eventId: event.id, userA: enc.userA, userB: enc.userB },
+              {
+                delay: delayMs,
+                jobId: `cross-push-${event.id}`,
+                removeOnComplete: true
+              }
+            );
+          } catch {
+            // BullMQ unavailable — the durable outbox row below covers delivery
+          }
+
+          await pool.query(
+            `INSERT INTO outbox_events (event_type, payload) VALUES ($1, $2)`,
+            ['cross_push', JSON.stringify({ eventId: event.id, userA: enc.userA, userB: enc.userB, delayMs })],
+          ).catch(() => {});
         }
       } catch (e) {
         // Silently catch race conditions (duplicate entry constraint)
@@ -362,15 +372,20 @@ export class CrossingService {
       },
     });
 
+    const center = H3Service.hexToCenter(e.hexId);
+
     return {
       id: e.id,
       other_user: other ? {
         id: isFullyRevealed ? other.id : null,
         first_name: isFullyRevealed ? other.firstName : `${other.firstName.charAt(0)}*`,
-        last_name: other.lastName,
-        profile_picture: other.profilePicture,
+        last_name: isFullyRevealed ? other.lastName : null,
+        profile_picture: isFullyRevealed ? other.profilePicture : null,
         blurred: !isFullyRevealed,
       } : null,
+      latitude: center.lat,
+      longitude: center.lng,
+      hex_id: e.hexId,
       fuzzed_time_str: CrossingService.getFuzzedTimeStr(e.crossedAt),
       cross_date_ist: e.crossDateIst,
       is_unlocked: isFullyRevealed,

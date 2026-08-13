@@ -52,7 +52,6 @@ export function startNotificationQueue(): void {
           type: 'cross_event',
           title: 'Paths Crossed',
           body: `Someone crossed your path. Open the app to find out who.`,
-          actorId: userB,
         });
 
         await createAndDeliverNotification({
@@ -60,7 +59,6 @@ export function startNotificationQueue(): void {
           type: 'cross_event',
           title: 'Paths Crossed',
           body: `Someone crossed your path. Open the app to find out who.`,
-          actorId: userA,
         });
 
         // 4. Trigger Socket Updates (Client fetches new sanitized list)

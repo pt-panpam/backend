@@ -43,12 +43,13 @@ export class ProximityService {
       if (previousHex) {
         await client.srem(`hex:${previousHex}`, String(userId));
       }
-      await client.sadd(`hex:${hexId}`, String(userId));
-      await client.expire(`hex:${hexId}`, USER_HEX_TTL);
     }
 
-    const occupants = await redis.getHexOccupants(hexId, userId);
-    const validEncounters: ValidEncounter[] = [];
+    await client.sadd(`hex:${hexId}`, String(userId));
+    await client.expire(`hex:${hexId}`, USER_HEX_TTL);
+    await client.expire(currentHexKey, USER_HEX_TTL);
+
+    const occupants = await redis.getHexOccupants(hexId, userId);    const validEncounters: ValidEncounter[] = [];
 
     for (const otherId of occupants) {
       const otherHex = await client.get(`user:${otherId}:hex`);

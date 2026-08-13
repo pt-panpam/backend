@@ -33,14 +33,15 @@ async function processOutbox(): Promise<void> {
       const data = event.payload;
 
       await notificationQueue.add(
-        'notify-user',
+        'send-crossing-push',
         {
-          encounterId: data.encounterId,
-          receiverId: data.receiverId,
+          eventId: data.eventId,
+          userA: data.userA,
+          userB: data.userB,
         },
         {
-          delay: data.delayMs,
-          jobId: `outbox-${event.id}`,
+          delay: Math.max(0, data.delayMs ?? 0),
+          jobId: `cross-push-${data.eventId}`,
           removeOnComplete: true,
           removeOnFail: false,
         },
