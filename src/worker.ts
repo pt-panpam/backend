@@ -19,6 +19,8 @@ import { PostPhoto } from './models/PostPhoto';
 import { PostLike } from './models/PostLike';
 import { Comment } from './models/Comment';
 import { Notification } from './models/Notification';
+import { Note } from './models/Note';
+import { NoteVote } from './models/NoteVote';
 
 async function startWorker() {
   try {
@@ -122,6 +124,25 @@ async function startWorker() {
         }
       } catch (err) {
         console.error('🧹 Cleanup worker error:', err);
+      }
+    }, 600000);
+
+    // 4. Expired notes cleanup — every 10 minutes
+    setInterval(async () => {
+      try {
+        const expiredNotes = await Note.findAll({
+          where: { expiresAt: { [Op.lt]: new Date() } },
+        });
+        for (const note of expiredNotes) {
+          await NoteVote.destroy({ where: { noteId: note.id } });
+          await note.destroy();
+        }
+
+        if (expiredNotes.length > 0) {
+          console.log(`🧹 Cleaned up ${expiredNotes.length} expired notes from DB`);
+        }
+      } catch (err) {
+        console.error('🧹 Note cleanup worker error:', err);
       }
     }, 600000);
   } catch (err) {
