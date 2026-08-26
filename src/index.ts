@@ -32,6 +32,14 @@ import heatmapRoutes from './routes/heatmap';
 const app = express();
 const server = http.createServer(app);
 
+// Keep the process alive on stray async errors (Express 4 doesn't catch async route throws)
+process.on('unhandledRejection', (reason: any) => {
+  console.error('Unhandled rejection:', reason?.message || reason);
+});
+process.on('uncaughtException', (err: Error) => {
+  console.error('Uncaught exception:', err.message);
+});
+
 // Middleware
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '50mb' }));

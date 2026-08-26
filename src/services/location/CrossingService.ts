@@ -3,13 +3,29 @@ import { CrossEvent } from '../../models/CrossEvent';
 import { CrossSettings } from '../../models/CrossSettings';
 import { User } from '../../models/User';
 import { Friend } from '../../models/Friend';
-import { Op } from 'sequelize';
+import { Op, fn, col, literal } from 'sequelize';
 import { getDatePartsInIST, istDateStr, createDateFromIST } from '../../utils/timezone';
 import { getNotificationQueue } from './NotificationQueue';
 import { ProximityService, ValidEncounter } from './ProximityService';
 import { H3Service } from './H3Service';
 import { RouteService } from './RouteService';
 import { pool } from './pgDb';
+
+const CROSS_TITLE_TIERS = [
+  { min: 1, max: 5, title: 'Stranger' },
+  { min: 6, max: 10, title: 'Passerby' },
+  { min: 11, max: 15, title: 'Dude' },
+  { min: 16, max: 20, title: 'Familiar' },
+  { min: 21, max: 25, title: 'Homie' },
+  { min: 26, max: 30, title: 'Buddy' },
+  { min: 31, max: 35, title: 'Friend' },
+  { min: 36, max: 40, title: 'Close One' },
+  { min: 41, max: 45, title: 'Bestie' },
+  { min: 46, max: 50, title: 'Close Soul' },
+];
+
+const CROSS_RESET_DAYS = 30;
+const CROSS_WARNING_DAYS = 5;
 
 export class CrossingService {
   private static instance: CrossingService;
@@ -26,6 +42,104 @@ export class CrossingService {
 
   setIO(io: Server): void {
     this.io = io;
+  }
+
+  static getCrossTitle(crossCount: number): string {
+    if (crossCount <= 0) return 'Stranger';
+    for (const tier of CROSS_TITLE_TIERS) {
+      if (crossCount >= tier.min && crossCount <= tier.max) {
+        return tier.title;
+      }
+    }
+    return 'Close Soul';
+  }
+
+  static getDaysUntilReset(lastCrossedAt: Date): number {
+    const now = new Date();
+    const lastCross = new Date(lastCrossedAt);
+    const diffMs = now.getTime() - lastCross.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const daysLeft = CROSS_RESET_DAYS - diffDays;
+    return Math.max(0, daysLeft);
+  }
+
+  static isResetWarning(daysUntilReset: number): boolean {
+    return daysUntilReset > 0 && daysUntilReset <= CROSS_WARNING_DAYS;
+  }
+
+  async getCrossCountBetweenUsers(userId1: number, userId2: number): Promise<number> {
+    const userA = Math.min(userId1, userId2);
+    const userB = Math.max(userId1, userId2);
+    return CrossEvent.count({
+      where: {
+        user1Id: userA,
+        user2Id: userB,
+        notified: true,
+      },
+    });
+  }
+
+  async getLastCrossTimeBetweenUsers(userId1: number, userId2: number): Promise<Date | null> {
+    const userA = Math.min(userId1, userId2);
+    const userB = Math.max(userId1, userId2);
+    const lastEvent = await CrossEvent.findOne({
+      where: {
+        user1Id: userA,
+        user2Id: userB,
+        notified: true,
+      },
+      order: [['crossedAt', 'DESC']],
+      attributes: ['crossedAt'],
+    });
+    return lastEvent ? lastEvent.crossedAt : null;
+  }
+
+  async getCrossTitleInfo(userId1: number, userId2: number): Promise<{
+    title: string;
+    cross_count: number;
+    days_until_reset: number;
+    is_reset_warning: boolean;
+  }> {
+    const crossCount = await this.getCrossCountBetweenUsers(userId1, userId2);
+    const title = CrossingService.getCrossTitle(crossCount);
+    
+    if (crossCount === 0) {
+      return {
+        title: 'Stranger',
+        cross_count: 0,
+        days_until_reset: CROSS_RESET_DAYS,
+        is_reset_warning: false,
+      };
+    }
+
+    const lastCrossTime = await this.getLastCrossTimeBetweenUsers(userId1, userId2);
+    if (!lastCrossTime) {
+      return {
+        title,
+        cross_count: crossCount,
+        days_until_reset: CROSS_RESET_DAYS,
+        is_reset_warning: false,
+      };
+    }
+
+    const daysUntilReset = CrossingService.getDaysUntilReset(lastCrossTime);
+    const isResetWarning = CrossingService.isResetWarning(daysUntilReset);
+
+    if (daysUntilReset === 0) {
+      return {
+        title: 'Stranger',
+        cross_count: 0,
+        days_until_reset: 0,
+        is_reset_warning: false,
+      };
+    }
+
+    return {
+      title,
+      cross_count: crossCount,
+      days_until_reset: daysUntilReset,
+      is_reset_warning: isResetWarning,
+    };
   }
 
   private async getUserDelay(userId: number): Promise<number> {
@@ -157,8 +271,12 @@ export class CrossingService {
             ['cross_push', JSON.stringify({ eventId: event.id, userA: enc.userA, userB: enc.userB, delayMs })],
           ).catch(() => {});
         }
-      } catch (e) {
-        // Silently catch race conditions (duplicate entry constraint)
+      } catch (e: any) {
+        // Unique-constraint races are expected and safe to ignore;
+        // anything else must be logged or cross events vanish silently.
+        if (!String(e?.message || '').toLowerCase().includes('unique')) {
+          console.error('CrossEvent findOrCreate failed:', e?.message || e);
+        }
       }
     }
   }
@@ -214,13 +332,31 @@ export class CrossingService {
       limit: 200,
     });
 
-    const grouped: Record<string, { date: string; total: number; unlocked: number; friend_total: number; friend_unlocked: number; unknown_total: number; unknown_unlocked: number }> = {};
+    const grouped: Record<string, { 
+      date: string; 
+      total: number; 
+      unlocked: number; 
+      friend_total: number; 
+      friend_unlocked: number; 
+      unknown_total: number; 
+      unknown_unlocked: number;
+      user_titles: Record<number, { title: string; cross_count: number; days_until_reset: number; is_reset_warning: boolean }>;
+    }> = {};
     const now = new Date();
 
     for (const e of events) {
       const date = e.crossDateIst;
       if (!grouped[date]) {
-        grouped[date] = { date, total: 0, unlocked: 0, friend_total: 0, friend_unlocked: 0, unknown_total: 0, unknown_unlocked: 0 };
+        grouped[date] = { 
+          date, 
+          total: 0, 
+          unlocked: 0, 
+          friend_total: 0, 
+          friend_unlocked: 0, 
+          unknown_total: 0, 
+          unknown_unlocked: 0,
+          user_titles: {}
+        };
       }
       const g = grouped[date];
       g.total++;
@@ -229,13 +365,7 @@ export class CrossingService {
 
       const otherId = userId === e.user1Id ? e.user2Id : e.user1Id;
       const friendship = await Friend.findOne({
-        where: {
-          [Op.or]: [
-            { requesterId: userId, addresseeId: otherId },
-            { requesterId: otherId, addresseeId: userId },
-          ],
-          status: 'accepted',
-        },
+        where: { userId, friendId: otherId },
       });
 
       if (friendship) {
@@ -244,6 +374,11 @@ export class CrossingService {
       } else {
         g.unknown_total++;
         if (isUnlocked) g.unknown_unlocked++;
+      }
+
+      if (isUnlocked && !g.user_titles[otherId]) {
+        const titleInfo = await this.getCrossTitleInfo(userId, otherId);
+        g.user_titles[otherId] = titleInfo;
       }
     }
 
@@ -363,22 +498,21 @@ export class CrossingService {
     });
 
     const friendship = await Friend.findOne({
-      where: {
-        [Op.or]: [
-          { requesterId: userId, addresseeId: otherId },
-          { requesterId: otherId, addresseeId: userId },
-        ],
-        status: 'accepted',
-      },
+      where: { userId, friendId: otherId },
     });
 
     const center = H3Service.hexToCenter(e.hexId);
+
+    let crossTitleInfo = null;
+    if (isFullyRevealed) {
+      crossTitleInfo = await this.getCrossTitleInfo(userId, otherId);
+    }
 
     return {
       id: e.id,
       other_user: other ? {
         id: isFullyRevealed ? other.id : null,
-        first_name: isFullyRevealed ? other.firstName : `${other.firstName.charAt(0)}*`,
+        first_name: isFullyRevealed ? other.firstName : null,
         last_name: isFullyRevealed ? other.lastName : null,
         profile_picture: isFullyRevealed ? other.profilePicture : null,
         blurred: !isFullyRevealed,
@@ -395,6 +529,10 @@ export class CrossingService {
       recap_slot_time: e.recapSlotTime.toISOString(),
       slot_unlock_at: e.recapSlotTime.toISOString(),
       crossed_at: e.crossedAt.toISOString(),
+      cross_title: crossTitleInfo?.title || null,
+      cross_count: crossTitleInfo?.cross_count || 0,
+      days_until_reset: crossTitleInfo?.days_until_reset ?? null,
+      is_reset_warning: crossTitleInfo?.is_reset_warning || false,
     };
   }
 }

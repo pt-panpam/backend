@@ -70,7 +70,7 @@ router.patch('/settings/', authenticate, async (req: AuthRequest, res: Response)
   });
 });
 
-// Get cross events (optional ?date=YYYY-MM-DD for specific day, else last 24h)
+// Get cross events (optional ?date=YYYY-MM-DD for specific day, else last 3 days)
 router.get('/events/', authenticate, async (req: AuthRequest, res: Response) => {
   const service = CrossingService.getInstance();
   const { date } = req.query;
@@ -79,7 +79,7 @@ router.get('/events/', authenticate, async (req: AuthRequest, res: Response) => 
     res.json({ results: events });
     return;
   }
-  const events = await service.getRecentCrosses(req.user!.id, 50, 24);
+  const events = await service.getRecentCrosses(req.user!.id, 50, 72);
   res.json({ results: events });
 });
 

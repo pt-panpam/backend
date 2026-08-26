@@ -58,6 +58,8 @@ export async function initDatabase(): Promise<void> {
     'ALTER TABLE "cross_events" ADD COLUMN IF NOT EXISTS "reveal_time_a" TIMESTAMPTZ DEFAULT NULL;',
     'ALTER TABLE "cross_events" ADD COLUMN IF NOT EXISTS "reveal_time_b" TIMESTAMPTZ DEFAULT NULL;',
     'ALTER TABLE "cross_events" ADD COLUMN IF NOT EXISTS "recap_slot_time" TIMESTAMPTZ DEFAULT NULL;',
+    'ALTER TABLE "cross_events" ALTER COLUMN "latitude" DROP NOT NULL;',
+    'ALTER TABLE "cross_events" ALTER COLUMN "longitude" DROP NOT NULL;',
     'DROP INDEX IF EXISTS idx_cross_events_notification_time;',
     'CREATE INDEX IF NOT EXISTS idx_cross_events_date_ist ON cross_events(cross_date_ist);',
     'DROP INDEX IF EXISTS idx_cross_events_unique_daily;',
