@@ -49,21 +49,25 @@ export async function runProximityMigrations(): Promise<void> {
       );
     `);
 
-    // Migrate constraint: old was (user_a, user_b, presence_a, presence_b),
-    // new is (user_a, user_b, hex_id) to prevent duplicate notifications
-    // for the same pair in the same hexagon.
+    // Enforce one encounter per continuous co-presence of a pair in a hexagon.
+    // A pair may cross again later (new overlap_started => new encounter), but a
+    // single continuous 30s+ stay only produces one confirmed encounter. This is
+    // the UNIQUE constraint that `confirmEncounter` relies on for idempotency.
     await client.query(`
       ALTER TABLE encounters DROP CONSTRAINT IF EXISTS unique_encounter_pair;
+      ALTER TABLE encounters DROP CONSTRAINT IF EXISTS unique_encounter_occurrence;
     `).catch(() => {});
     await client.query(`
       DELETE FROM encounters e1 USING encounters e2
       WHERE e1.id < e2.id
         AND e1.user_a = e2.user_a
         AND e1.user_b = e2.user_b
-        AND e1.hex_id = e2.hex_id;
+        AND e1.hex_id = e2.hex_id
+        AND e1.overlap_started = e2.overlap_started;
     `).catch(() => {});
     await client.query(`
-      ALTER TABLE encounters ADD CONSTRAINT unique_encounter_pair UNIQUE (user_a, user_b, hex_id);
+      ALTER TABLE encounters ADD CONSTRAINT unique_encounter_occurrence
+        UNIQUE (user_a, user_b, hex_id, overlap_started);
     `).catch((err: any) => {
       if (!err.message?.includes('already exists')) throw err;
     });

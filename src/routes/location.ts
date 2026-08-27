@@ -2,7 +2,6 @@ import { Router, Response } from 'express';
 import { AuthRequest, authenticate } from '../middleware/auth';
 import { CrossingService } from '../services/location/CrossingService';
 import { H3Service } from '../services/location/H3Service';
-import { RouteService } from '../services/location/RouteService';
 
 const router = Router();
 
@@ -12,26 +11,6 @@ router.get('/crosses/', authenticate, async (req: AuthRequest, res: Response) =>
   const crossingService = CrossingService.getInstance();
   const events = await crossingService.getRecentCrosses(req.user!.id, limit);
   res.json({ results: events });
-});
-
-// Get user's route history (optional ?days=N, default 3)
-router.get('/route/', authenticate, async (req: AuthRequest, res: Response) => {
-  const routeService = RouteService.getInstance();
-  if (!routeService.isAvailable()) {
-    res.json({ results: [], message: 'Route storage unavailable.' });
-    return;
-  }
-  const days = Math.min(parseInt(req.query.days as string) || 3, 3);
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const points = await routeService.getUserRoute(req.user!.id, since);
-  res.json({
-    results: points.map(p => ({
-      latitude: p.latitude,
-      longitude: p.longitude,
-      hex_id: p.hexId,
-      recorded_at: p.recordedAt,
-    })),
-  });
 });
 
 // Get hex boundary (for map overlay)

@@ -4,6 +4,7 @@ import { User } from '../../models/User';
 import { CrossEvent } from '../../models/CrossEvent';
 import { createAndDeliverNotification } from '../NotificationService';
 import { getIO } from '../../io';
+import { EncounterService } from './EncounterService';
 
 function getConnectionOpts() {
   const url = new URL(env.REDIS_URL);
@@ -32,6 +33,11 @@ export function startNotificationQueue(): void {
   const worker = new Worker(
     'cross-notifications',
     async (job: Job) => {
+      if (job.name === 'send-encounter-push') {
+        await EncounterService.getInstance().handleEncounterPush(job.data);
+        return;
+      }
+
       if (job.name === 'send-crossing-push') {
         const { eventId, userA, userB } = job.data;
         

@@ -1,15 +1,11 @@
 import { Server } from 'socket.io';
 import { CrossEvent } from '../../models/CrossEvent';
-import { CrossSettings } from '../../models/CrossSettings';
 import { User } from '../../models/User';
 import { Friend } from '../../models/Friend';
-import { Op, fn, col, literal } from 'sequelize';
-import { getDatePartsInIST, istDateStr, createDateFromIST } from '../../utils/timezone';
-import { getNotificationQueue } from './NotificationQueue';
-import { ProximityService, ValidEncounter } from './ProximityService';
+import { Op } from 'sequelize';
+import { getDatePartsInIST } from '../../utils/timezone';
 import { H3Service } from './H3Service';
-import { RouteService } from './RouteService';
-import { pool } from './pgDb';
+import { EncounterService } from './EncounterService';
 
 const CROSS_TITLE_TIERS = [
   { min: 1, max: 5, title: 'Stranger' },
@@ -142,32 +138,6 @@ export class CrossingService {
     };
   }
 
-  private async getUserDelay(userId: number): Promise<number> {
-    const s = await CrossSettings.findOne({ where: { userId }, attributes: ['revealDelayMinutes'] });
-    return s?.revealDelayMinutes ?? 45;
-  }
-
-  private async getUserSettings(userId: number) {
-    const s = await CrossSettings.findOne({ where: { userId } });
-    return {
-      hour1: s?.revealScheduleHour1 ?? 9,
-      hour2: s?.revealScheduleHour2 ?? 21,
-    };
-  }
-
-  private computeRecapSlotTime(crossedAt: Date, hour1: number, hour2: number): Date {
-    const parts = getDatePartsInIST(crossedAt);
-    const crossedMinutes = parts.hour * 60 + parts.minute;
-
-    if (crossedMinutes < hour1 * 60) {
-      return createDateFromIST(parts.year, parts.month, parts.day, hour1, 0, 0);
-    }
-    if (crossedMinutes >= hour1 * 60 && crossedMinutes < hour2 * 60) {
-      return createDateFromIST(parts.year, parts.month, parts.day, hour2, 0, 0);
-    }
-    return createDateFromIST(parts.year, parts.month, parts.day + 1, hour1, 0, 0);
-  }
-
   static getFuzzedTimeStr(date: Date): string {
     const parts = getDatePartsInIST(date);
     if (parts.hour >= 5 && parts.hour < 12) return 'Today Morning';
@@ -178,107 +148,15 @@ export class CrossingService {
 
   async updateLocation(userId: number, latitude: number, longitude: number) {
     const timestamp = new Date();
-    const hexId = H3Service.latLngToHex(latitude, longitude);
-    const proximity = ProximityService.getInstance();
-    const { newEncounters } = await proximity.enterHexagon(userId, latitude, longitude, timestamp);
-
-    if (newEncounters.length > 0) {
-      await this.processValidEncounters(newEncounters, timestamp);
-    }
-
+    const encounter = EncounterService.getInstance();
+    const { hexId, newEncounters } = await encounter.onLocationUpdate(userId, latitude, longitude, timestamp);
     return { hex_id: hexId, encounters: newEncounters.length };
   }
 
   async updateLocationBatch(userId: number, points: { latitude: number; longitude: number; recorded_at: string }[]) {
-    const routeService = RouteService.getInstance();
-    const proximity = ProximityService.getInstance();
-    let totalEncounters = 0;
-
-    const routePoints = points.map(p => ({
-      userId,
-      latitude: p.latitude,
-      longitude: p.longitude,
-      hexId: H3Service.latLngToHex(p.latitude, p.longitude),
-      recordedAt: new Date(p.recorded_at),
-    }));
-
-    await routeService.insertRoutePointsBatch(routePoints);
-
-    for (const p of points) {
-      const timestamp = new Date(p.recorded_at);
-      const { newEncounters } = await proximity.enterHexagon(userId, p.latitude, p.longitude, timestamp);
-      if (newEncounters.length > 0) {
-        await this.processValidEncounters(newEncounters, timestamp);
-        totalEncounters += newEncounters.length;
-      }
-    }
-
-    return { points_processed: points.length, encounters: totalEncounters };
-  }
-
-  async processValidEncounters(encounters: ValidEncounter[], timestamp: Date) {
-    const cDate = istDateStr(timestamp);
-
-    for (const enc of encounters) {
-      const delayA = await this.getUserDelay(enc.userA);
-      const delayB = await this.getUserDelay(enc.userB);
-
-      const revealTimeA = new Date(timestamp.getTime() + delayA * 60000);
-      const revealTimeB = new Date(timestamp.getTime() + delayB * 60000);
-
-      const notificationTime = revealTimeA > revealTimeB ? revealTimeA : revealTimeB;
-
-      const settingsB = await this.getUserSettings(enc.userB);
-      const recapSlot = this.computeRecapSlotTime(timestamp, settingsB.hour1, settingsB.hour2);
-
-      try {
-        const [event, created] = await CrossEvent.findOrCreate({
-          where: { user1Id: enc.userA, user2Id: enc.userB, crossDateIst: cDate },
-          defaults: {
-            user1Id: enc.userA,
-            user2Id: enc.userB,
-            hexId: enc.hexId,
-            crossDateIst: cDate,
-            crossedAt: timestamp,
-            revealTimeA,
-            revealTimeB,
-            notificationTime,
-            recapSlotTime: recapSlot,
-            notified: false,
-            published: true,
-          } as any
-        });
-
-        if (created) {
-          const q = getNotificationQueue();
-          const delayMs = Math.max(0, notificationTime.getTime() - Date.now());
-
-          try {
-            await q.add('send-crossing-push',
-              { eventId: event.id, userA: enc.userA, userB: enc.userB },
-              {
-                delay: delayMs,
-                jobId: `cross-push-${event.id}`,
-                removeOnComplete: true
-              }
-            );
-          } catch {
-            // BullMQ unavailable — the durable outbox row below covers delivery
-          }
-
-          await pool.query(
-            `INSERT INTO outbox_events (event_type, payload) VALUES ($1, $2)`,
-            ['cross_push', JSON.stringify({ eventId: event.id, userA: enc.userA, userB: enc.userB, delayMs })],
-          ).catch(() => {});
-        }
-      } catch (e: any) {
-        // Unique-constraint races are expected and safe to ignore;
-        // anything else must be logged or cross events vanish silently.
-        if (!String(e?.message || '').toLowerCase().includes('unique')) {
-          console.error('CrossEvent findOrCreate failed:', e?.message || e);
-        }
-      }
-    }
+    const encounter = EncounterService.getInstance();
+    const { newEncounters } = await encounter.onLocationBatch(userId, points);
+    return { points_processed: points.length, encounters: newEncounters.length };
   }
 
   async getRecentCrosses(userId: number, limit: number = 50, hours: number = 24) {
@@ -383,51 +261,6 @@ export class CrossingService {
     }
 
     return Object.values(grouped).sort((a, b) => b.date.localeCompare(a.date));
-  }
-
-  async getRouteTimeline(userId: number) {
-    const routeService = RouteService.getInstance();
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const points = await routeService.getUserRoute(userId, since);
-
-    const events = await CrossEvent.findAll({
-      where: {
-        [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
-        notified: true,
-        crossedAt: { [Op.gte]: since },
-      },
-      order: [['crossedAt', 'ASC']],
-    });
-
-    const timeline: { type: string; time: string; latitude: number; longitude: number; hex_id: string | null; label: string | null }[] = [];
-
-    for (const p of points) {
-      timeline.push({
-        type: 'route',
-        time: p.recordedAt.toISOString(),
-        latitude: p.latitude,
-        longitude: p.longitude,
-        hex_id: p.hexId,
-        label: null,
-      });
-    }
-
-    for (const e of events) {
-      const otherId = userId === e.user1Id ? e.user2Id : e.user1Id;
-      const other = await User.findByPk(otherId, { attributes: ['firstName', 'lastName'] });
-      const center = H3Service.hexToCenter(e.hexId);
-      timeline.push({
-        type: 'cross',
-        time: e.crossedAt.toISOString(),
-        latitude: center.lat,
-        longitude: center.lng,
-        hex_id: e.hexId,
-        label: other ? `${other.firstName} ${other.lastName}` : 'Someone',
-      });
-    }
-
-    timeline.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
-    return timeline;
   }
 
   async getDashboardStats(userId: number) {

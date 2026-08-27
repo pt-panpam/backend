@@ -3,7 +3,6 @@ import { env } from './config/env';
 import { sequelize, initDatabase } from './config/database';
 import { initModels } from './models';
 import { RedisService } from './services/location/RedisService';
-import { RouteService } from './services/location/RouteService';
 import { CrossingService } from './services/location/CrossingService';
 import { runProximityMigrations } from './services/location/pgDb';
 import { startOutboxWorker } from './services/location/OutboxWorker';
@@ -30,9 +29,6 @@ async function startWorker() {
     const redis = RedisService.getInstance();
     await redis.connect();
 
-    const route = RouteService.getInstance();
-    await route.connect();
-
     CrossingService.getInstance().setIO(null as any);
 
     await runProximityMigrations();
@@ -41,9 +37,8 @@ async function startWorker() {
 
     console.log('🔧 Worker: cron jobs started');
 
-    // 1. Cleanup old route points & cross events every hour (retention: 3 days)
+    // 1. Cleanup old cross events every hour (retention: 3 days)
     setInterval(() => {
-      route.cleanupOldRoutes().catch(() => {});
       CrossEvent.destroy({
         where: { crossedAt: { [Op.lt]: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) } },
       }).catch(() => {});
@@ -89,10 +84,6 @@ async function startWorker() {
         if (isRecapWindow && lastNotifiedPeriod !== periodKey) {
           lastNotifiedPeriod = periodKey;
           console.log(`✅ Recap worker notified ${notifiedCount} users at ${h}:${m} UTC`);
-        }
-
-        for (const s of allUsers) {
-          await redis.clearRoutePoints(s.userId).catch(() => {});
         }
       } catch (err) {
         console.error('❌ Recap worker error:', err);

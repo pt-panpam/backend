@@ -90,13 +90,6 @@ router.get('/recap-history/', authenticate, async (req: AuthRequest, res: Respon
   res.json({ results: recap });
 });
 
-// Get route timeline (private, last 24h)
-router.get('/timeline/', authenticate, async (req: AuthRequest, res: Response) => {
-  const service = CrossingService.getInstance();
-  const timeline = await service.getRouteTimeline(req.user!.id);
-  res.json({ results: timeline });
-});
-
 // Publish cross events for review window
 router.post('/publish/', authenticate, async (req: AuthRequest, res: Response) => {
   const events = await CrossEvent.findAll({

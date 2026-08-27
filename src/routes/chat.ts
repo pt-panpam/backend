@@ -28,14 +28,13 @@ router.get('/unread-count/', authenticate, async (req: AuthRequest, res: Respons
   const convs = (me as any)?.conversations ?? [];
   let totalUnread = 0;
   for (const c of convs) {
-    const lastMsg = await Message.findOne({ where: { conversationId: c.id }, order: [['created_at', 'DESC']] });
-    if (!lastMsg) continue;
+    const cutoff = c.disappearingMinutes > 0
+      ? new Date(Date.now() - c.disappearingMinutes * 60 * 1000)
+      : null;
     const readStatus = await ConversationReadStatus.findOne({ where: { conversationId: c.id, userId } });
     const where: any = { conversationId: c.id };
-    if (readStatus?.lastReadMessageId) {
-      const lastReadMsg = await Message.findByPk(readStatus.lastReadMessageId);
-      if (lastReadMsg) where.created_at = { [Op.gt]: lastReadMsg.created_at };
-    }
+    if (readStatus?.lastReadMessageId) where.id = { [Op.gt]: readStatus.lastReadMessageId };
+    if (cutoff) where.created_at = { [Op.gt]: cutoff };
     const unread = await Message.count({ where: { ...where, senderId: { [Op.ne]: userId } } });
     totalUnread += unread;
   }
@@ -68,16 +67,19 @@ router.get('/conversations/', authenticate, async (req: AuthRequest, res: Respon
 
   const results = await Promise.all(convs
     .map(async (c: any) => {
-      const lastMsg = await Message.findOne({ where: { conversationId: c.id }, order: [['created_at', 'DESC']] });
+      const cutoff = c.disappearingMinutes > 0
+        ? new Date(Date.now() - c.disappearingMinutes * 60 * 1000)
+        : null;
+      const lastNameWhere: any = { conversationId: c.id };
+      if (cutoff) lastNameWhere.created_at = { [Op.gt]: cutoff };
+      const lastMsg = await Message.findOne({ where: lastNameWhere, order: [['created_at', 'DESC']] });
       const other = (c as any).participants?.find((p: any) => p.id !== userId);
       const readStatus = await ConversationReadStatus.findOne({ where: { conversationId: c.id, userId } });
       let unreadCount = 0;
       if (lastMsg) {
         const where: any = { conversationId: c.id };
-        if (readStatus?.lastReadMessageId) {
-          const lastReadMsg = await Message.findByPk(readStatus.lastReadMessageId);
-          if (lastReadMsg) where.created_at = { [Op.gt]: lastReadMsg.created_at };
-        }
+        if (readStatus?.lastReadMessageId) where.id = { [Op.gt]: readStatus.lastReadMessageId };
+        if (cutoff) where.created_at = { ...(where.created_at || {}), [Op.gt]: cutoff };
         unreadCount = await Message.count({ where: { ...where, senderId: { [Op.ne]: userId } } });
       }
       return {

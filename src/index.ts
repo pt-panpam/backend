@@ -10,7 +10,6 @@ import { errorHandler } from './middleware/errorHandler';
 import { setupSocket } from './socket';
 import { setIO } from './io';
 import { RedisService } from './services/location/RedisService';
-import { RouteService } from './services/location/RouteService';
 import { CrossingService } from './services/location/CrossingService';
 import { runProximityMigrations } from './services/location/pgDb';
 import { startOutboxWorker } from './services/location/OutboxWorker';
@@ -28,6 +27,7 @@ import locationRoutes from './routes/location';
 import safeZoneRoutes from './routes/safezones';
 import noteRoutes from './routes/notes';
 import heatmapRoutes from './routes/heatmap';
+import placesRoutes from './routes/places';
 
 const app = express();
 const server = http.createServer(app);
@@ -56,6 +56,7 @@ app.use('/api/location', locationRoutes);
 app.use('/api/safe-zones', safeZoneRoutes);
 app.use('/api/notes', noteRoutes);
 app.use('/api/heatmap', heatmapRoutes);
+app.use('/api/places', placesRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -105,10 +106,6 @@ async function start() {
     // Connect Redis
     const redis = RedisService.getInstance();
     await redis.connect();
-
-    // Connect PostgreSQL/TimescaleDB
-    const route = RouteService.getInstance();
-    await route.connect();
 
     // Initialize CrossingService with Socket.IO
     CrossingService.getInstance().setIO(io);
