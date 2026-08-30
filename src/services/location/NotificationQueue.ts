@@ -1,9 +1,5 @@
 import { Queue, Worker, Job } from 'bullmq';
 import { env } from '../../config/env';
-import { User } from '../../models/User';
-import { CrossEvent } from '../../models/CrossEvent';
-import { createAndDeliverNotification } from '../NotificationService';
-import { getIO } from '../../io';
 import { EncounterService } from './EncounterService';
 
 function getConnectionOpts() {
@@ -33,46 +29,9 @@ export function startNotificationQueue(): void {
   const worker = new Worker(
     'cross-notifications',
     async (job: Job) => {
+      // The single source of truth for dynamic profile reveal pushes
       if (job.name === 'send-encounter-push') {
         await EncounterService.getInstance().handleEncounterPush(job.data);
-        return;
-      }
-
-      if (job.name === 'send-crossing-push') {
-        const { eventId, userA, userB } = job.data;
-        
-        // 1. Verify Event and mark as Notified
-        const event = await CrossEvent.findByPk(eventId);
-        if (!event || event.notified) return;
-        await event.update({ notified: true });
-
-        // 2. Fetch Users
-        const uA = await User.findByPk(userA, { attributes: ['id', 'lastName'] });
-        const uB = await User.findByPk(userB, { attributes: ['id', 'lastName'] });
-        if (!uA || !uB) return;
-
-        // 3. Deliver Anonymous Push Notifications
-        // Rule: Never reveal identity, time, or location.
-        await createAndDeliverNotification({
-          userId: userA,
-          type: 'cross_event',
-          title: 'Paths Crossed',
-          body: `Someone crossed your path. Open the app to find out who.`,
-        });
-
-        await createAndDeliverNotification({
-          userId: userB,
-          type: 'cross_event',
-          title: 'Paths Crossed',
-          body: `Someone crossed your path. Open the app to find out who.`,
-        });
-
-        // 4. Trigger Socket Updates (Client fetches new sanitized list)
-        const io = getIO();
-        if (io) {
-          io.to(`user:${userA}`).emit('cross:detected', { eventId });
-          io.to(`user:${userB}`).emit('cross:detected', { eventId });
-        }
       }
     },
     { connection: getConnectionOpts(), concurrency: 10 }

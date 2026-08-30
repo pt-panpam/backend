@@ -8,11 +8,8 @@ import { runProximityMigrations } from './services/location/pgDb';
 import { startOutboxWorker } from './services/location/OutboxWorker';
 import { startNotificationQueue } from './services/location/NotificationQueue';
 import { CrossEvent } from './models/CrossEvent';
-import { CrossSettings } from './models/CrossSettings';
 import { Op } from 'sequelize';
-import { createAndDeliverNotification } from './services/NotificationService';
 import { StorageService } from './services/StorageService';
-import { istDateStr } from './utils/timezone';
 import { Post } from './models/Post';
 import { PostPhoto } from './models/PostPhoto';
 import { PostLike } from './models/PostLike';
@@ -20,6 +17,9 @@ import { Comment } from './models/Comment';
 import { Notification } from './models/Notification';
 import { Note } from './models/Note';
 import { NoteVote } from './models/NoteVote';
+import { pool } from './services/location/pgDb';
+import { EncounterService } from './services/location/EncounterService';
+import { ProximityService } from './services/location/ProximityService';
 
 async function startWorker() {
   try {
@@ -44,53 +44,9 @@ async function startWorker() {
       }).catch(() => {});
     }, 3600000);
 
-    // 2. Recap worker — fires every minute, unlocks crossings whose recapSlotTime has passed
-    //    At 9AM IST (03:30 UTC) and 9PM IST (15:30 UTC) it also sends recap notifications
-    let lastNotifiedPeriod: string | null = null;
-    setInterval(async () => {
-      try {
-        const crossService = CrossingService.getInstance();
-        const allUsers = await CrossSettings.findAll({ attributes: ['userId'] });
-        const now = new Date();
-        const todayStr = istDateStr(now);
-        const h = now.getUTCHours();
-        const m = now.getUTCMinutes();
+    // [REMOVED: The 9 AM / 9 PM static recap worker. Unlocks are now dynamically handled at pair unlock_at via BullMQ].
 
-        // Determine if this is a recap window (within 1 minute of 03:30 or 15:30 UTC)
-        const isRecapWindow =
-          (h === 3 && m === 30) ||
-          (h === 15 && m === 30);
-        const currentPeriod: 'am' | 'pm' = h < 12 ? 'am' : 'pm';
-        const periodKey = `${todayStr}-${currentPeriod}`;
-
-        let notifiedCount = 0;
-        for (const s of allUsers) {
-          try {
-            const result = await crossService.generateAndStoreRecap(s.userId, todayStr, currentPeriod);
-
-            if (isRecapWindow && lastNotifiedPeriod !== periodKey && result.events_processed > 0) {
-              await createAndDeliverNotification({
-                userId: s.userId,
-                type: 'cross_recap',
-                title: 'New Crosses Revealed',
-                body: `Your recap for ${todayStr} is ready!`,
-                actorId: s.userId,
-              });
-              notifiedCount++;
-            }
-          } catch {}
-        }
-
-        if (isRecapWindow && lastNotifiedPeriod !== periodKey) {
-          lastNotifiedPeriod = periodKey;
-          console.log(`✅ Recap worker notified ${notifiedCount} users at ${h}:${m} UTC`);
-        }
-      } catch (err) {
-        console.error('❌ Recap worker error:', err);
-      }
-    }, 60000);
-
-    // 3. Expired posts & chat media cleanup from R2 — every 10 minutes
+    // 2. Expired posts & chat media cleanup from R2 — every 10 minutes
     setInterval(async () => {
       try {
         const expiredPosts = await Post.findAll({
@@ -118,7 +74,7 @@ async function startWorker() {
       }
     }, 600000);
 
-    // 4. Expired notes cleanup — every 10 minutes
+    // 3. Expired notes cleanup — every 10 minutes
     setInterval(async () => {
       try {
         const expiredNotes = await Note.findAll({
@@ -136,6 +92,51 @@ async function startWorker() {
         console.error('🧹 Note cleanup worker error:', err);
       }
     }, 600000);
+
+    // 4. Delete stale presences (users who stopped sending updates) — every 2 minutes.
+    //    Only current/live users keep a presence row; anyone not heard from recently is removed
+    //    so they never appear as "in the hexagon". Rows referenced by encounters are kept.
+    setInterval(async () => {
+      try {
+        const staleBefore = new Date(Date.now() - 5 * 60 * 1000);
+        const res = await pool.query(
+          `DELETE FROM presences p
+           WHERE p.left_at IS NULL AND p.last_seen_at < $1
+             AND NOT EXISTS (
+               SELECT 1 FROM encounters e
+               WHERE e.presence_a = p.id OR e.presence_b = p.id
+             )`,
+          [staleBefore],
+        );
+        if (res.rowCount && res.rowCount > 0) {
+          console.log(`🧹 Deleted ${res.rowCount} stale presences`);
+        }
+      } catch (err) {
+        console.error('🧹 Presence cleanup worker error:', err);
+      }
+    }, 120000);
+
+    // 5. Background same-hex monitor — every 30 seconds.
+    //    Reads the live Redis hex membership (one current hex per user), and for every hex
+    //    with 2+ occupants triggers cross detection + notification via EncounterService
+    //    (delay minutes -> notification queue -> CrossEvent).
+    setInterval(async () => {
+      try {
+        const hexes = await ProximityService.getInstance().getHexesWithOccupants();
+        let crosses = 0;
+        for (const hex of hexes) {
+          if (hex.occupantIds.length >= 2) {
+            const found = await EncounterService.getInstance().checkHexCrossings(hex.hexId, hex.occupantIds);
+            crosses += found.length;
+          }
+        }
+        if (crosses > 0) {
+          console.log(`🔔 Same-hex monitor confirmed ${crosses} crossing(s)`);
+        }
+      } catch (err) {
+        console.error('🔔 Same-hex monitor error:', err);
+      }
+    }, 30000);
   } catch (err) {
     console.error('Failed to start worker:', err);
     process.exit(1);

@@ -26,7 +26,7 @@ function shouldSendPush(type: NotificationType, user: User): boolean {
       return user.pushMessages;
     case 'profile_like':
       return user.pushLikes;
-    case 'cross_event':
+    case 'cross_event': // Immediate anonymous and delayed reveal pushes
       return true;
     default:
       return true;
@@ -59,7 +59,7 @@ async function serializeNotification(notification: Notification) {
     actor,
     post: notification.postId,
     is_read: notification.isRead,
-    created_at: notification.created_at,
+    created_at: notification.created_at, // Use sequelize auto-generated timestamp
   };
 }
 

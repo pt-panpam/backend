@@ -15,6 +15,7 @@ import { runProximityMigrations } from './services/location/pgDb';
 import { startOutboxWorker } from './services/location/OutboxWorker';
 import { startNotificationQueue } from './services/location/NotificationQueue';
 import { StorageService } from './services/StorageService';
+import { deleteExpiredPosts } from './services/postCleanup';
 import { CrossEvent } from './models/CrossEvent';
 
 import authRoutes from './routes/auth';
@@ -136,6 +137,14 @@ async function start() {
         }
       } catch {}
     }, 60000);
+
+    // Physically delete posts older than 24h (media + likes/comments/notifications)
+    deleteExpiredPosts().catch(() => {});
+    setInterval(() => {
+      deleteExpiredPosts().catch((err) => {
+        console.error('Post cleanup failed:', err?.message || err);
+      });
+    }, 60 * 60 * 1000);
 
     server.listen(env.PORT, '0.0.0.0', () => {
       console.log(`🚀 Node.js backend running on http://0.0.0.0:${env.PORT}`);

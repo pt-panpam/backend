@@ -114,6 +114,22 @@ export class NoteService {
     return { note, alreadyVoted: false };
   }
 
+  async updateNote(noteId: number, userId: number, text: string): Promise<Note> {
+    const note = await Note.findByPk(noteId);
+    if (!note) throw new Error('Note not found');
+    if (note.userId !== userId) throw new Error('Not your note');
+    note.text = text;
+    await note.save();
+    return note;
+  }
+
+  async deleteNote(noteId: number, userId: number): Promise<void> {
+    const note = await Note.findByPk(noteId);
+    if (!note) throw new Error('Note not found');
+    if (note.userId !== userId) throw new Error('Not your note');
+    await note.destroy();
+  }
+
   async publishOverdueNotes(): Promise<number> {
     const now = new Date();
     const [count] = await Note.update(

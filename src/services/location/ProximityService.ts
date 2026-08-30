@@ -9,6 +9,11 @@ export interface ValidEncounter {
   hexId: string;
 }
 
+export interface HexOccupants {
+  hexId: string;
+  occupantIds: number[];
+}
+
 export class ProximityService {
   private static instance: ProximityService;
 
@@ -49,19 +54,23 @@ export class ProximityService {
     await client.expire(`hex:${hexId}`, USER_HEX_TTL);
     await client.expire(currentHexKey, USER_HEX_TTL);
 
-    const occupants = await redis.getHexOccupants(hexId, userId);    const validEncounters: ValidEncounter[] = [];
+    return { newEncounters: [] };
+  }
 
-    for (const otherId of occupants) {
-      const otherHex = await client.get(`user:${otherId}:hex`);
-      if (otherHex === hexId) {
-        validEncounters.push({
-          userA: Math.min(userId, otherId),
-          userB: Math.max(userId, otherId),
-          hexId,
-        });
+  // Enumerate every hex currently occupied, with the list of users in it.
+  async getHexesWithOccupants(): Promise<HexOccupants[]> {
+    const redis = RedisService.getInstance();
+    if (!redis.isAvailable()) return [];
+
+    const keys = await redis.scanHexKeys();
+    const result: HexOccupants[] = [];
+    for (const key of keys) {
+      const hexId = key.replace(/^hex:/, '');
+      const occupants = await redis.getHexOccupants(hexId);
+      if (occupants.length > 0) {
+        result.push({ hexId, occupantIds: occupants });
       }
     }
-
-    return { newEncounters: validEncounters };
+    return result;
   }
 }

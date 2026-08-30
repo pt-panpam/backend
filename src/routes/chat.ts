@@ -4,6 +4,7 @@ import { User } from '../models/User';
 import { Conversation } from '../models/Conversation';
 import { Message } from '../models/Message';
 import { Post } from '../models/Post';
+import { PostPhoto } from '../models/PostPhoto';
 import { ConversationReadStatus } from '../models/ConversationReadStatus';
 import { Call } from '../models/Call';
 import { Friend } from '../models/Friend';
@@ -155,7 +156,7 @@ router.get('/conversations/:id/', authenticate, async (req: AuthRequest, res: Re
     include: [
       { model: User, as: 'sender', attributes: ['id', 'firstName', 'lastName', 'profilePicture'] },
       { model: Message, as: 'replyTo', attributes: ['id', 'text', 'senderId'] },
-      { model: Post, as: 'post', attributes: ['id', 'caption'] },
+      { model: Post, as: 'post', attributes: ['id', 'caption'], include: [{ model: PostPhoto as any, as: 'photos', attributes: ['image', 'type'], order: [['order', 'ASC']] }] },
     ],
     order: [['created_at', 'ASC']],
   });
@@ -177,7 +178,7 @@ router.get('/conversations/:id/', authenticate, async (req: AuthRequest, res: Re
       sender: { id: (m as any).sender?.id, first_name: (m as any).sender?.firstName, profile_picture: (m as any).sender?.profilePicture },
       text: m.text,
       reply_to: (m as any).replyTo ? { id: (m as any).replyTo.id, text: (m as any).replyTo.text } : null,
-      post: (m as any).post ? { id: (m as any).post.id, caption: (m as any).post.caption } : null,
+      post: (m as any).post ? { id: (m as any).post.id, caption: (m as any).post.caption, photo: (m as any).post.photos?.[0] ? { image: (m as any).post.photos[0].image, type: (m as any).post.photos[0].type } : null } : null,
       is_read: m.isRead,
       created_at: m.created_at,
     })),
@@ -218,7 +219,7 @@ router.post('/send/', authenticate, async (req: AuthRequest, res: Response) => {
     include: [
       { model: User, as: 'sender', attributes: ['id', 'firstName', 'lastName', 'profilePicture'] },
       { model: Message, as: 'replyTo', attributes: ['id', 'text', 'senderId'] },
-      { model: Post, as: 'post', attributes: ['id', 'caption'] },
+      { model: Post, as: 'post', attributes: ['id', 'caption'], include: [{ model: PostPhoto as any, as: 'photos', attributes: ['image', 'type'], order: [['order', 'ASC']] }] },
     ],
   });
 
@@ -228,7 +229,7 @@ router.post('/send/', authenticate, async (req: AuthRequest, res: Response) => {
     sender: { id: (full as any)?.sender?.id, first_name: (full as any)?.sender?.firstName, profile_picture: (full as any)?.sender?.profilePicture },
     text: msg.text,
     reply_to: (full as any)?.replyTo ? { id: (full as any).replyTo.id, text: (full as any).replyTo.text } : null,
-    post: (full as any)?.post ? { id: (full as any).post.id, caption: (full as any).post.caption } : null,
+    post: (full as any)?.post ? { id: (full as any).post.id, caption: (full as any).post.caption, photo: (full as any).post.photos?.[0] ? { image: (full as any).post.photos[0].image, type: (full as any).post.photos[0].type } : null } : null,
     is_read: msg.isRead,
     created_at: msg.created_at,
   };

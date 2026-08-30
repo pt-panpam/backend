@@ -9,7 +9,7 @@ let intervalHandle: ReturnType<typeof setInterval> | null = null;
  * Outbox Relay Worker:
  * Runs every 5 seconds, grabs up to 100 unprocessed outbox events
  * using FOR UPDATE SKIP LOCKED, and relays them to BullMQ with
- * the configured delay so the queue consumer fires at notify_at.
+ * the configured delay so the queue consumer fires at exactly unlock_at.
  */
 async function processOutbox(): Promise<void> {
   const client = await pool.connect();
@@ -17,7 +17,7 @@ async function processOutbox(): Promise<void> {
     await client.query('BEGIN');
 
     const { rows: events } = await client.query(
-      `SELECT id, payload FROM outbox_events
+      `SELECT id, payload, event_type FROM outbox_events
        WHERE processed_at IS NULL
        ORDER BY created_at ASC
        LIMIT 100
@@ -47,23 +47,7 @@ async function processOutbox(): Promise<void> {
             removeOnFail: false,
           },
         );
-        continue;
       }
-
-      await notificationQueue.add(
-        'send-crossing-push',
-        {
-          eventId: data.eventId,
-          userA: data.userA,
-          userB: data.userB,
-        },
-        {
-          delay: Math.max(0, data.delayMs ?? 0),
-          jobId: `cross-push-${data.eventId}`,
-          removeOnComplete: true,
-          removeOnFail: false,
-        },
-      );
     }
 
     const eventIds = events.map((e: any) => e.id);

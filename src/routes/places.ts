@@ -3,7 +3,12 @@ import { AuthRequest, authenticate } from '../middleware/auth';
 
 const router = Router();
 
-const OVERPASS_ENDPOINT = 'https://overpass-api.de/api/interpreter';
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+];
+const OVERPASS_TIMEOUT_MS = 8000;
 
 // Map OSM tags to a friendly category + emoji + popularity weight
 function classify(tags: Record<string, string>): { category: string; icon: string; weight: number } | null {
@@ -69,14 +74,36 @@ router.get('/nearby/', authenticate, async (req: AuthRequest, res: Response) => 
   `;
 
   try {
-    const ovResp = await fetch(OVERPASS_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'data=' + encodeURIComponent(query),
-    });
+    // Try multiple Overpass mirrors with a per-request timeout for resilience.
+    const body = 'data=' + encodeURIComponent(query);
+    let ovResp: Awaited<ReturnType<typeof fetch>> | null = null;
+    let lastStatus = 0;
 
-    if (!ovResp.ok) {
-      res.status(502).json({ error: 'Place provider unavailable', detail: `Overpass ${ovResp.status}` });
+    for (const endpoint of OVERPASS_ENDPOINTS) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
+      try {
+        const resp = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body,
+          signal: controller.signal,
+        });
+        if (resp.ok) {
+          ovResp = resp;
+          break;
+        }
+        lastStatus = resp.status;
+      } catch (e: any) {
+        if (e?.name === 'AbortError') console.error(`Places fetch timeout: ${endpoint}`);
+        else console.error(`Places fetch failed: ${endpoint} - ${e?.message || e}`);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    if (!ovResp) {
+      res.status(502).json({ error: 'Place provider unavailable', detail: `Overpass ${lastStatus || 'unreachable'}` });
       return;
     }
 

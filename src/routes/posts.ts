@@ -59,7 +59,7 @@ router.get('/feed/', authenticate, async (req: AuthRequest, res: Response) => {
 // Get user posts
 router.get('/user/:id/', authenticate, async (req: AuthRequest, res: Response) => {
   const posts = await Post.findAll({
-    where: { userId: Number(req.params.id), isActive: true },
+    where: { userId: Number(req.params.id), isActive: true, expiresAt: { [Op.gt]: new Date() } },
     include: [
       { model: User, as: 'user', attributes: ['id', 'username', 'firstName', 'lastName', 'profilePicture'] },
       { model: PostPhoto, as: 'photos' },

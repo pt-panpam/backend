@@ -73,6 +73,57 @@ router.get('/mine/', authenticate, async (req: AuthRequest, res: Response) => {
   });
 });
 
+router.put('/:id/', authenticate, async (req: AuthRequest, res: Response) => {
+  const id = parseInt(req.params.id as string);
+  if (isNaN(id)) {
+    res.status(400).json({ error: 'Invalid id' });
+    return;
+  }
+  const { text } = req.body;
+  if (typeof text !== 'string' || text.trim().length === 0) {
+    res.status(400).json({ error: 'text (string) required' });
+    return;
+  }
+  if (text.trim().length > 200) {
+    res.status(400).json({ error: 'text must be 200 characters or less' });
+    return;
+  }
+  try {
+    const service = NoteService.getInstance();
+    const note = await service.updateNote(id, req.user!.id, text.trim());
+    res.json({ id: note.id, text: note.text, upvote_count: note.upvoteCount });
+  } catch (e: any) {
+    if (e.message === 'Note not found') {
+      res.status(404).json({ error: 'Note not found' });
+    } else if (e.message === 'Not your note') {
+      res.status(403).json({ error: 'Forbidden' });
+    } else {
+      res.status(500).json({ error: 'Internal error' });
+    }
+  }
+});
+
+router.delete('/:id/', authenticate, async (req: AuthRequest, res: Response) => {
+  const id = parseInt(req.params.id as string);
+  if (isNaN(id)) {
+    res.status(400).json({ error: 'Invalid id' });
+    return;
+  }
+  try {
+    const service = NoteService.getInstance();
+    await service.deleteNote(id, req.user!.id);
+    res.json({ ok: true });
+  } catch (e: any) {
+    if (e.message === 'Note not found') {
+      res.status(404).json({ error: 'Note not found' });
+    } else if (e.message === 'Not your note') {
+      res.status(403).json({ error: 'Forbidden' });
+    } else {
+      res.status(500).json({ error: 'Internal error' });
+    }
+  }
+});
+
 router.post('/:id/upvote/', authenticate, async (req: AuthRequest, res: Response) => {
   const id = parseInt(req.params.id as string);
   if (isNaN(id)) {
